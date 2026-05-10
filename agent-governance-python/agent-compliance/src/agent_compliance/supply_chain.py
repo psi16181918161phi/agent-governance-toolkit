@@ -450,42 +450,104 @@ class SupplyChainGuard:
                         ))
 
     # ------------------------------------------------------------------
-    # Cargo.toml (simple parser – stdlib only)
+    # Cargo.toml (tomllib-based, stdlib only)
     # ------------------------------------------------------------------
 
     def check_cargo_toml(self, path: str) -> list[SupplyChainFinding]:
-        """Check Cargo.toml for unpinned versions."""
+        """Check Cargo.toml for unpinned versions.
+
+        Uses ``tomllib`` (Python 3.11+) so the following layouts are all
+        covered, including ones the prior regex-based parser silently
+        skipped:
+
+          * ``[dependencies]``                   (standard)
+          * ``[dev-dependencies]``               (dev)
+          * ``[build-dependencies]``             (build scripts)
+          * ``[target.'cfg(...)'.dependencies]``  (platform-specific)
+          * Table-form deps: ``foo = { git = "...", rev = "..." }``
+          * Table-form deps: ``foo = { path = "../local" }``
+          * Workspace-inherited: ``foo = { workspace = true }``
+        """
+        try:
+            import tomllib
+        except ImportError:
+            import tomli as tomllib  # type: ignore[no-redef]
+
         findings: list[SupplyChainFinding] = []
-        text = Path(path).read_text(encoding="utf-8")
+        try:
+            with open(path, "rb") as fh:
+                data = tomllib.load(fh)
+        except (OSError, tomllib.TOMLDecodeError):
+            return findings
 
-        in_deps = False
-        for line in text.splitlines():
-            stripped = line.strip()
+        dep_tables: list[dict] = []
+        for key in ("dependencies", "dev-dependencies", "build-dependencies"):
+            deps = data.get(key)
+            if isinstance(deps, dict):
+                dep_tables.append(deps)
 
-            if re.match(r"\[.*dependencies.*\]", stripped):
-                in_deps = True
-                continue
-            if stripped.startswith("[") and "dependencies" not in stripped:
-                in_deps = False
-                continue
+        # Target-specific: [target.'cfg(...)'.dependencies]
+        for target_cfg in (data.get("target") or {}).values():
+            if isinstance(target_cfg, dict):
+                for key in ("dependencies", "dev-dependencies", "build-dependencies"):
+                    deps = target_cfg.get(key)
+                    if isinstance(deps, dict):
+                        dep_tables.append(deps)
 
-            if in_deps:
-                kv = re.match(r'^(\S+)\s*=\s*"([^"]+)"', stripped)
-                if kv:
-                    name, version = kv.group(1), kv.group(2)
-                    if not re.match(r"^\d+\.\d+\.\d+$", version):
-                        findings.append(SupplyChainFinding(
-                            package=name,
-                            version=version,
-                            severity="medium",
-                            rule="unpinned-cargo",
-                            message=(
-                                f"Crate '{name}' version '{version}' is not "
-                                f"pinned to an exact semver."
-                            ),
-                        ))
+        for deps in dep_tables:
+            for name, spec in deps.items():
+                self._emit_cargo_finding(findings, name, spec)
 
         return findings
+
+    def _emit_cargo_finding(
+        self, findings: list[SupplyChainFinding], name: str, spec: object,
+    ) -> None:
+        """Classify a single Cargo dependency and emit a finding if needed."""
+        if isinstance(spec, str):
+            if not _EXACT_SEMVER.match(spec.strip()):
+                findings.append(SupplyChainFinding(
+                    package=name,
+                    version=spec,
+                    severity="medium",
+                    rule="unpinned-cargo",
+                    message=(
+                        f"Crate '{name}' version '{spec}' is not "
+                        f"pinned to an exact semver."
+                    ),
+                ))
+        elif isinstance(spec, dict):
+            for protocol_key in ("git", "path"):
+                if protocol_key in spec:
+                    findings.append(SupplyChainFinding(
+                        package=name,
+                        version=str(spec.get(protocol_key, "")),
+                        severity="high",
+                        rule="non-registry-source",
+                        message=(
+                            f"Crate '{name}' is sourced via "
+                            f"'{protocol_key}=' ({spec.get(protocol_key)!r})"
+                            "; pin to an exact version published on "
+                            "crates.io instead."
+                        ),
+                    ))
+                    return
+            if spec.get("workspace") is True:
+                return
+            inline_version = spec.get("version")
+            if isinstance(inline_version, str) and not _EXACT_SEMVER.match(
+                inline_version.strip()
+            ):
+                findings.append(SupplyChainFinding(
+                    package=name,
+                    version=inline_version,
+                    severity="medium",
+                    rule="unpinned-cargo",
+                    message=(
+                        f"Crate '{name}' version '{inline_version}' is not "
+                        f"pinned to an exact semver."
+                    ),
+                ))
 
     # ------------------------------------------------------------------
     # Freshness (offline)

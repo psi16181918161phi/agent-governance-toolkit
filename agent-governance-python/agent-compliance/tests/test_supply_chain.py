@@ -414,6 +414,113 @@ class TestCheckCargoToml:
         findings = guard.check_cargo_toml(str(cargo))
         assert not any(f.rule == "unpinned-cargo" for f in findings)
 
+    def test_git_source_flagged(self, guard: SupplyChainGuard, tmp_path: Path) -> None:
+        """Regression: table-form deps like {git="..."} were invisible
+        to the regex parser, which only matched 'name = "version"'.
+        """
+        cargo = tmp_path / "Cargo.toml"
+        cargo.write_text(
+            '[package]\nname = "test"\n\n'
+            '[dependencies]\n'
+            'evil = { git = "https://github.com/attacker/evil.git", rev = "abc123" }\n'
+        )
+        findings = guard.check_cargo_toml(str(cargo))
+        assert any(
+            f.rule == "non-registry-source" and f.package == "evil"
+            for f in findings
+        )
+
+    def test_path_source_flagged(self, guard: SupplyChainGuard, tmp_path: Path) -> None:
+        """Regression: path deps bypass crates.io entirely."""
+        cargo = tmp_path / "Cargo.toml"
+        cargo.write_text(
+            '[package]\nname = "test"\n\n'
+            '[dependencies]\n'
+            'local-crate = { path = "../local-crate" }\n'
+        )
+        findings = guard.check_cargo_toml(str(cargo))
+        assert any(
+            f.rule == "non-registry-source" and f.package == "local-crate"
+            for f in findings
+        )
+
+    def test_inline_table_unpinned_version(self, guard: SupplyChainGuard, tmp_path: Path) -> None:
+        """Table-form with version key: {version="^1.0", features=[...]}."""
+        cargo = tmp_path / "Cargo.toml"
+        cargo.write_text(
+            '[package]\nname = "test"\n\n'
+            '[dependencies]\n'
+            'serde = { version = "^1.0", features = ["derive"] }\n'
+        )
+        findings = guard.check_cargo_toml(str(cargo))
+        assert any(
+            f.rule == "unpinned-cargo" and f.package == "serde"
+            for f in findings
+        )
+
+    def test_inline_table_pinned_version_passes(self, guard: SupplyChainGuard, tmp_path: Path) -> None:
+        cargo = tmp_path / "Cargo.toml"
+        cargo.write_text(
+            '[package]\nname = "test"\n\n'
+            '[dependencies]\n'
+            'serde = { version = "1.0.193", features = ["derive"] }\n'
+        )
+        findings = guard.check_cargo_toml(str(cargo))
+        assert not any(f.package == "serde" for f in findings)
+
+    def test_workspace_inherited_passes(self, guard: SupplyChainGuard, tmp_path: Path) -> None:
+        """Workspace-inherited deps get their version from the root."""
+        cargo = tmp_path / "Cargo.toml"
+        cargo.write_text(
+            '[package]\nname = "test"\n\n'
+            '[dependencies]\n'
+            'serde = { workspace = true }\n'
+        )
+        findings = guard.check_cargo_toml(str(cargo))
+        assert not any(f.package == "serde" for f in findings)
+
+    def test_dev_dependencies_checked(self, guard: SupplyChainGuard, tmp_path: Path) -> None:
+        cargo = tmp_path / "Cargo.toml"
+        cargo.write_text(
+            '[package]\nname = "test"\n\n'
+            '[dev-dependencies]\n'
+            'criterion = "0.5"\n'
+        )
+        findings = guard.check_cargo_toml(str(cargo))
+        assert any(
+            f.rule == "unpinned-cargo" and f.package == "criterion"
+            for f in findings
+        )
+
+    def test_build_dependencies_checked(self, guard: SupplyChainGuard, tmp_path: Path) -> None:
+        cargo = tmp_path / "Cargo.toml"
+        cargo.write_text(
+            '[package]\nname = "test"\n\n'
+            '[build-dependencies]\n'
+            'cc = "1.0"\n'
+        )
+        findings = guard.check_cargo_toml(str(cargo))
+        assert any(
+            f.rule == "unpinned-cargo" and f.package == "cc"
+            for f in findings
+        )
+
+    def test_target_specific_deps_checked(self, guard: SupplyChainGuard, tmp_path: Path) -> None:
+        """Regression: target-specific deps were in a different TOML
+        section and invisible to the regex parser.
+        """
+        cargo = tmp_path / "Cargo.toml"
+        cargo.write_text(
+            '[package]\nname = "test"\n\n'
+            "[target.'cfg(windows)'.dependencies]\n"
+            'winapi = "0.3"\n'
+        )
+        findings = guard.check_cargo_toml(str(cargo))
+        assert any(
+            f.rule == "unpinned-cargo" and f.package == "winapi"
+            for f in findings
+        )
+
 
 # ---------------------------------------------------------------------------
 # check_typosquatting
