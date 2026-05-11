@@ -253,7 +253,12 @@ public sealed class GovernanceKernel : IDisposable
                     signingKey: signingKey);
 
                 // Fire-and-forget: we don't block the audit pipeline on sink I/O.
-                _ = EventSink.EmitAsync(governanceEvent);
+                // Errors are surfaced via Trace so they can be monitored without
+                // disrupting governance evaluation.
+                _ = EventSink.EmitAsync(governanceEvent).AsTask().ContinueWith(
+                    static t => System.Diagnostics.Trace.TraceError(
+                        "[GovernanceKernel] EventSink.EmitAsync failed: {0}", t.Exception),
+                    TaskContinuationOptions.OnlyOnFaulted);
             });
         }
 

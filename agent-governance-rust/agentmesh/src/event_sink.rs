@@ -312,9 +312,10 @@ impl<W: Write + Send + Sync> GovernanceEventSink for OtlpEventSink<W> {
 // ---------------------------------------------------------------------------
 
 fn hmac_sha256_hex(key: &[u8], input: &str) -> String {
-    let mut mac = Hmac::<Sha256>::new_from_slice(key).unwrap_or_else(|_| {
-        Hmac::<Sha256>::new_from_slice(b"fallback").expect("HMAC key error")
-    });
+    // HMAC-SHA256 accepts any key length (pads/hashes internally),
+    // so new_from_slice only fails for truly invalid sizes (never for SHA-256).
+    let mut mac = Hmac::<Sha256>::new_from_slice(key)
+        .expect("HMAC-SHA256 accepts any key length");
     mac.update(input.as_bytes());
     let result = mac.finalize().into_bytes();
     result.iter().map(|b| format!("{:02x}", b)).collect()
