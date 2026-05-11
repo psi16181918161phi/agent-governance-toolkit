@@ -152,3 +152,6 @@ Nanvix
 reqwest
 requireapproval
 uncallable
+jsonl
+deployer
+pii

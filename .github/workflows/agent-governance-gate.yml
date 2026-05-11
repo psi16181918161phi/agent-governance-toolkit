@@ -1,0 +1,84 @@
+name: Agent Governance Gate
+
+on:
+  workflow_call:
+    inputs:
+      policy_file:
+        description: "Path to the agent policy YAML file (e.g. .agents/security.yaml)"
+        required: false
+        type: string
+        default: ".agents/security.yaml"
+      agent_manifest:
+        description: "Path to the agent manifest YAML file (e.g. agents.yaml)"
+        required: false
+        type: string
+        default: "agents.yaml"
+      require_receipt:
+        description: "Generate and verify a signed Ed25519 deployment receipt"
+        required: false
+        type: boolean
+        default: true
+      audit_file:
+        description: "Path to write the audit trail JSONL file"
+        required: false
+        type: string
+        default: "governance-audit.jsonl"
+      python_version:
+        description: "Python version to use"
+        required: false
+        type: string
+        default: "3.11"
+    outputs:
+      gate_result:
+        description: "Result of the governance gate: PASSED or FAILED"
+        value: ${{ jobs.governance-gate.outputs.gate_result }}
+
+permissions:
+  contents: read
+
+jobs:
+  governance-gate:
+    name: Governance Gate
+    runs-on: ubuntu-latest
+    outputs:
+      gate_result: ${{ steps.gate.outputs.gate_result }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: ${{ inputs.python_version }}
+
+      - name: Install dependencies
+        run: |
+          pip install --no-cache-dir cryptography==46.0.7 PyYAML==6.0.2
+
+      - name: Run governance gate
+        id: gate
+        env:
+          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_ACTOR: ${{ github.actor }}
+        run: |
+          RECEIPT_FLAG="--require-receipt"
+          if [ "${{ inputs.require_receipt }}" = "false" ]; then
+            RECEIPT_FLAG="--no-require-receipt"
+          fi
+          python scripts/governance_gate.py \
+            --policy-file "${{ inputs.policy_file }}" \
+            --agent-manifest "${{ inputs.agent_manifest }}" \
+            --commit "${{ github.sha }}" \
+            --audit-file "${{ inputs.audit_file }}" \
+            $RECEIPT_FLAG \
+          && echo "gate_result=PASSED" >> "$GITHUB_OUTPUT" \
+          || { echo "gate_result=FAILED" >> "$GITHUB_OUTPUT"; exit 1; }
+
+      - name: Upload audit trail
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4.6.2
+        with:
+          name: governance-audit-trail
+          path: ${{ inputs.audit_file }}
+          if-no-files-found: ignore
+          retention-days: 90
