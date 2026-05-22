@@ -49,7 +49,7 @@ pip install agent-governance-toolkit[full]
 
 **TypeScript / Node.js** (npm)
 ```bash
-npm install @microsoft/agentmesh-sdk
+npm install @microsoft/agent-governance-sdk
 ```
 
 **.NET** (NuGet)
@@ -153,7 +153,7 @@ if decision.allowed:
 ### ポリシーの適用 — TypeScript
 
 ```typescript
-import { PolicyEngine } from "@microsoft/agentmesh-sdk";
+import { PolicyEngine } from "@microsoft/agent-governance-sdk";
 
 const engine = new PolicyEngine([
   { action: "web_search", effect: "allow" },
@@ -285,7 +285,7 @@ decision = engine.evaluate("did:mesh:agent-1", {"tool_name": "analyze"})
 | 言語 | パッケージ | インストール |
 |----------|---------|---------|
 | **Python** | [`agent-governance-toolkit[full]`](https://pypi.org/project/agent-governance-toolkit/) | `pip install agent-governance-toolkit[full]` |
-| **TypeScript** | [`@microsoft/agentmesh-sdk`](../../agent-governance-typescript/) | `npm install @microsoft/agentmesh-sdk` |
+| **TypeScript** | [`@microsoft/agent-governance-sdk`](../../agent-governance-typescript/) | `npm install @microsoft/agent-governance-sdk` |
 | **.NET** | [`Microsoft.AgentGovernance`](https://www.nuget.org/packages/Microsoft.AgentGovernance) | `dotnet add package Microsoft.AgentGovernance` |
 | **Rust** | [`agentmesh`](https://crates.io/crates/agentmesh) | `cargo add agentmesh` |
 | **Rust MCP** | [`agentmesh-mcp`](https://crates.io/crates/agentmesh-mcp) | `cargo add agentmesh-mcp` |
@@ -328,8 +328,8 @@ decision = engine.evaluate("did:mesh:agent-1", {"tool_name": "analyze"})
 | エージェント目標ハイジャック | ASI-01 | ✅ ポリシーエンジンが未承認の目標変更をブロック |
 | 過剰なケイパビリティ | ASI-02 | ✅ ケイパビリティモデルが最小権限を適用 |
 | ID と特権の悪用 | ASI-03 | ✅ Ed25519 証明書によるゼロトラスト ID |
-| 制御されないコード実行 | ASI-04 | ✅ Agent Runtime 実行リング + サンドボックス |
-| 安全でない出力処理 | ASI-05 | ✅ コンテンツポリシーがすべての出力を検証 |
+| エージェントサプライチェーン侵害 | ASI-04 | ✅ 依存関係混乱スキャン + ツール検証 |
+| 予期しないコード実行 | ASI-05 | ✅ Agent Runtime 実行リング + サンドボックス |
 | メモリポイズニング | ASI-06 | ✅ 完全性チェック付きエピソディックメモリ |
 | 安全でないエージェント間通信 | ASI-07 | ✅ AgentMesh 暗号化チャネル + トラストゲート |
 | カスケード障害 | ASI-08 | ✅ サーキットブレーカー + SLO 適用 |

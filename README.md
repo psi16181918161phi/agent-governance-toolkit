@@ -43,7 +43,7 @@ Python · TypeScript · .NET · Rust · Go. Works with LangChain, CrewAI, AutoGe
 - **Python**: `pip install agent-governance-toolkit[full]` requires Python 3.10+
 - **Node.js**: For TypeScript SDK, Node.js 18+ and npm 9+
 - **.NET**: .NET 8+ for the .NET SDK
-- **Go**: Go 1.21+ for the Go SDK
+- **Go**: Go 1.25+ for the Go SDK
 - **Rust**: Rust 1.70+ for the Rust SDK
 
 ### Optional dependencies
@@ -54,8 +54,18 @@ Python · TypeScript · .NET · Rust · Go. Works with LangChain, CrewAI, AutoGe
 ## Quick Start
 
 ```bash
-pip install agent-governance-toolkit[full]
+pip install agent-governance-toolkit
 ```
+
+Govern any tool function in two lines:
+
+```python
+from agentmesh.governance import govern
+
+safe_tool = govern(my_tool, policy="policy.yaml")   # every call checked, logged, enforced
+```
+
+Or use the full `PolicyEvaluator` API for programmatic control:
 
 ```python
 from agent_os.policies import (
@@ -148,7 +158,7 @@ agt red-team scan ./prompts/ --min-grade B         # prompt injection audit
 agt lint-policy policies/                          # validate policy files
 ```
 
-Full walkthrough: [quickstart.md](docs/quickstart.md) -- zero to governed agents in 10 minutes with YAML, OPA/Rego, and Cedar policies.
+Full walkthrough: [quickstart.md](docs/quickstart.md) -- zero to governed agents in 5 minutes.
 🌍 Also in: [日本語](docs/i18n/quickstart.ja.md) | [简体中文](docs/i18n/quickstart.zh-CN.md) | [한국어](docs/i18n/quickstart.ko.md)
 
 ---
@@ -231,6 +241,7 @@ Every major component has a formal RFC 2119 specification with conformance tests
 | [LangGraph](https://github.com/langchain-ai/langgraph) / [LangChain](https://github.com/langchain-ai/langchain) | Adapter |
 | [CrewAI](https://github.com/crewAIInc/crewAI) | Adapter |
 | [OpenAI Agents SDK](https://github.com/openai/openai-agents-python) | Middleware |
+| Claude Code | Governance plugin package |
 | [Google ADK](https://github.com/google/adk-python) | Adapter |
 | [LlamaIndex](https://github.com/run-llama/llama_index) | Middleware |
 | [Haystack](https://github.com/deepset-ai/haystack) | Pipeline |
@@ -248,15 +259,15 @@ AGT covers all 10 risks identified in the [OWASP Agentic Security Top 10](docs/O
 
 | Risk | AGT Control |
 |------|-------------|
-| ASI-01 Agent Goal Hijacking | Policy engine blocks unauthorized goal changes |
-| ASI-02 Excessive Capabilities | Capability model enforces least-privilege |
+| ASI-01 Agent Goal Hijack | Policy engine blocks unauthorized goal changes |
+| ASI-02 Tool Misuse & Exploitation | Capability model enforces least-privilege |
 | ASI-03 Identity & Privilege Abuse | Zero-trust identity with Ed25519 + ML-DSA-65 |
-| ASI-04 Uncontrolled Code Execution | Execution rings + sandboxing |
-| ASI-05 Insecure Output Handling | Content policies validate all outputs |
-| ASI-06 Memory Poisoning | Episodic memory with integrity checks |
+| ASI-04 Agentic Supply Chain Compromise | Dependency-confusion scanning + tool verification |
+| ASI-05 Unexpected Code Execution | 4-tier execution rings + sandboxing |
+| ASI-06 Memory & Context Poisoning | Episodic memory with integrity checks |
 | ASI-07 Unsafe Inter-Agent Comms | Encrypted channels + trust gates |
-| ASI-08 Cascading Failures | Circuit breakers + SLO enforcement |
-| ASI-09 Human-Agent Trust Deficit | Full audit trails + flight recorder |
+| ASI-08 Cascading Agent Failures | Circuit breakers + SLO enforcement |
+| ASI-09 Human-Agent Trust Exploitation | Full audit trails + flight recorder |
 | ASI-10 Rogue Agents | Kill switch + ring isolation + anomaly detection |
 
 Regulatory alignment: [EU AI Act](docs/compliance/) · [NIST AI RMF](docs/compliance/nist-ai-rmf-alignment.md) · [SOC 2](docs/compliance/soc2-mapping.md)
@@ -265,17 +276,19 @@ Regulatory alignment: [EU AI Act](docs/compliance/) · [NIST AI RMF](docs/compli
 
 ## Install
 
-| Language | Command |
-|----------|---------|
-| **Python** | `pip install agent-governance-toolkit[full]` |
-| **TypeScript** | `npm install @microsoft/agent-governance-sdk` |
-| **Copilot CLI** | `npx @microsoft/agent-governance-copilot-cli install` |
-| **.NET** | `dotnet add package Microsoft.AgentGovernance` |
-| **Rust** | `cargo add agent-governance` |
-| **Go** | `go get github.com/microsoft/agent-governance-toolkit/agent-governance-golang` |
+| Language | Package | Command |
+|----------|---------|---------|
+| **Python** | [`agent-governance-toolkit`](https://pypi.org/project/agent-governance-toolkit/) | `pip install agent-governance-toolkit[full]` |
+| **TypeScript** | [`@microsoft/agent-governance-sdk`](agent-governance-typescript/) | `npm install @microsoft/agent-governance-sdk` |
+| **Copilot CLI** | [`@microsoft/agent-governance-copilot-cli`](agent-governance-copilot-cli/) | `npx @microsoft/agent-governance-copilot-cli install` |
+| **Claude Code** | [`@microsoft/agent-governance-claude-code`](agent-governance-claude-code/) | `claude --plugin-dir ./agent-governance-claude-code` |
+| **.NET** | [`Microsoft.AgentGovernance`](https://www.nuget.org/packages/Microsoft.AgentGovernance) | `dotnet add package Microsoft.AgentGovernance` |
+| **.NET MCP** | `Microsoft.AgentGovernance.Extensions.ModelContextProtocol` | `dotnet add package Microsoft.AgentGovernance.Extensions.ModelContextProtocol` |
+| **Rust** | [`agent-governance`](https://crates.io/crates/agent-governance) | `cargo add agent-governance` |
+| **Go** | [`agent-governance-toolkit`](agent-governance-golang/) | `go get github.com/microsoft/agent-governance-toolkit/agent-governance-golang` |
 
-All five languages implement core governance (policy, identity, trust, audit). Python has the full stack.
-See [Language Package Matrix](docs/PACKAGE-FEATURE-MATRIX.md) for per-language coverage.
+All five language packages implement core governance (policy, identity, trust, audit). Python has the full stack, and the Copilot CLI and Claude Code packages are first-party local developer surfaces built on the TypeScript SDK.
+See **[Language Package Matrix](docs/PACKAGE-FEATURE-MATRIX.md)** for detailed per-language coverage.
 
 <details>
 <summary><b>Individual Python packages</b></summary>
@@ -318,7 +331,7 @@ See [Known Limitations](docs/LIMITATIONS.md) for honest design boundaries and re
 
 | Category | Links |
 |----------|-------|
-| **Getting Started** | [Quick Start](docs/quickstart.md) · [Tutorials](docs/tutorials/) (40+) · [FAQ](docs/FAQ.md) |
+| **Getting Started** | [Quick Start](docs/quickstart.md) · [Tutorials](docs/tutorials/) (60+) · [FAQ](docs/FAQ.md) |
 | **Architecture** | [System Design](docs/ARCHITECTURE.md) · [Threat Model](docs/security/threat-model.md) · [ADRs](docs/adr/) (25) |
 | **Specifications** | [All Specs](docs/specs/) (10 formal specs, 992 conformance tests) |
 | **API Reference** | [Agent OS](agent-governance-python/agent-os/README.md) · [AgentMesh](agent-governance-python/agent-mesh/README.md) · [Agent SRE](agent-governance-python/agent-sre/README.md) |

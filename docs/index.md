@@ -78,15 +78,20 @@ hide:
 
 <div class="agt-hero" markdown>
 
-# Agent Governance Toolkit
+# Ship agents to production without losing sleep
 
-Runtime governance for AI agents: deterministic policy enforcement, zero-trust identity, execution sandboxing, and SRE for autonomous agents.
+Policy enforcement, identity, sandboxing, and SRE for autonomous AI agents. One `pip install`, any framework.
+
+```
+pip install agent-governance-toolkit
+```
 
 <div class="agt-hero-badges">
   <a href="quickstart/">🚀 Quick Start</a>
   <a href="https://pypi.org/project/agent-governance-toolkit/">📦 PyPI</a>
   <a href="https://github.com/microsoft/agent-governance-toolkit">💻 GitHub</a>
   <a href="tutorials/index/">📚 Tutorials</a>
+  <a href="reference/comparison/">⚖️ How AGT Compares</a>
 </div>
 
 <div class="agt-stats">
@@ -95,6 +100,88 @@ Runtime governance for AI agents: deterministic policy enforcement, zero-trust i
   <div class="agt-stat"><span class="agt-stat-value">5</span><span class="agt-stat-label">Languages</span></div>
   <div class="agt-stat"><span class="agt-stat-value">20+</span><span class="agt-stat-label">Integrations</span></div>
 </div>
+
+</div>
+
+<div class="agt-section" markdown>
+
+## The problem
+
+Your AI agents call tools, browse the web, query databases, and delegate to other agents. Once deployed, they make decisions autonomously. You need answers to three questions:
+
+**1. Is this action allowed?** An agent with access to `send_email` and `query_database` should not be able to `drop_table`. OAuth scopes and IAM roles control which services an agent can reach, not what it does once connected.
+
+**2. Which agent did this?** In a multi-agent system, five agents might share a single API key. When something goes wrong, "an agent did it" is not an incident response.
+
+**3. Can you prove what happened?** Auditors and regulators need tamper-evident records of every decision: what policy was active, what the agent requested, and why it was allowed or denied.
+
+</div>
+
+<div class="agt-section" markdown>
+
+## Govern any agent in 2 lines
+
+Wrap any tool function with `govern()`. Policy enforcement, audit logging, and denial handling are automatic.
+
+```python
+from agentmesh.governance import govern
+
+safe_tool = govern(my_tool, policy="policy.yaml")
+```
+
+That's it. `safe_tool` evaluates your YAML policy on every call, logs the decision, and raises `GovernanceDenied` if the action is blocked. Works with LangChain, CrewAI, OpenAI Agents, AutoGen, Google ADK, and any other framework.
+
+```yaml
+# policy.yaml
+apiVersion: governance.toolkit/v1
+name: production-policy
+default_action: allow
+rules:
+  - name: block-destructive
+    condition: "action.type in ['drop', 'delete', 'truncate']"
+    action: deny
+    description: "Destructive operations require human approval"
+
+  - name: require-approval-for-send
+    condition: "action.type == 'send_email'"
+    action: require_approval
+    approvers: ["security-team"]
+```
+
+```
+>>> safe_tool(action="read", table="users")
+{'table': 'users', 'rows': 42}
+
+>>> safe_tool(action="drop", table="users")
+GovernanceDenied: Action denied by policy rule 'block-destructive':
+  Destructive operations require human approval
+```
+
+</div>
+
+<div class="agt-section" markdown>
+
+## How it works
+
+```
+                       ┌─────────────────────────────────────────────┐
+                       │            Agent Governance Toolkit          │
+                       │                                             │
+Agent ──→ govern() ──→ │  Policy Engine ──→ Identity ──→ Audit Log   │ ──→ Tool
+                       │       │                │            │       │
+                       │   YAML/OPA/Cedar   SPIFFE SVID   Tamper-   │
+                       │                                  evident    │
+                       └─────────────────────────────────────────────┘
+
+  ┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐
+  │ Agent OS  │    │   Mesh   │    │   SRE    │    │ Sandbox  │
+  │ policies  │    │ identity │    │  SLOs    │    │  rings   │
+  │ lifecycle │    │  routing │    │  chaos   │    │ isolation│
+  │ approval  │    │   trust  │    │  costs   │    │ kill sw  │
+  └──────────┘    └──────────┘    └──────────┘    └──────────┘
+```
+
+Every layer is optional. Start with `govern()` and add layers as your risk profile grows. Most teams run policy enforcement + audit logging and never need the full stack.
 
 </div>
 

@@ -42,7 +42,7 @@ pip install agent-governance-toolkit[full]
 
 **TypeScript / Node.js** (npm)
 ```bash
-npm install @microsoft/agentmesh-sdk
+npm install @microsoft/agent-governance-sdk
 ```
 
 **.NET** (NuGet)
@@ -135,7 +135,7 @@ if decision.allowed:
 ### 执行策略 — TypeScript
 
 ```typescript
-import { PolicyEngine } from "@microsoft/agentmesh-sdk";
+import { PolicyEngine } from "@microsoft/agent-governance-sdk";
 
 const engine = new PolicyEngine([
   { action: "web_search", effect: "allow" },
@@ -267,7 +267,7 @@ decision = engine.evaluate("did:mesh:agent-1", {"tool_name": "analyze"})
 | 语言 | Package | Install |
 |----------|---------|---------|
 | **Python** | [`agent-governance-toolkit[full]`](https://pypi.org/project/agent-governance-toolkit/) | `pip install agent-governance-toolkit[full]` |
-| **TypeScript** | [`@microsoft/agentmesh-sdk`](../../agent-governance-typescript/) | `npm install @microsoft/agentmesh-sdk` |
+| **TypeScript** | [`@microsoft/agent-governance-sdk`](../../agent-governance-typescript/) | `npm install @microsoft/agent-governance-sdk` |
 | **.NET** | [`Microsoft.AgentGovernance`](https://www.nuget.org/packages/Microsoft.AgentGovernance) | `dotnet add package Microsoft.AgentGovernance` |
 | **Rust** | [`agentmesh`](https://crates.io/crates/agentmesh) | `cargo add agentmesh` |
 | **Go** | [`agentmesh`](../../agent-governance-golang/) | `go get github.com/microsoft/agent-governance-toolkit/agent-governance-golang` |
@@ -309,8 +309,8 @@ decision = engine.evaluate("did:mesh:agent-1", {"tool_name": "analyze"})
 | 代理目标劫持 | ASI-01 | ✅ 策略引擎阻止未授权的目标更改 |
 | 过度能力 | ASI-02 | ✅ 能力模型强制最小权限原则 |
 | 身份与权限滥用 | ASI-03 | ✅ 基于 Ed25519 证书的零信任身份 |
-| 不受控代码执行 | ASI-04 | ✅ Agent Runtime 执行环 + 沙箱 |
-| 不安全输出处理 | ASI-05 | ✅ 内容策略验证所有输出 |
+| 代理供应链攻击 | ASI-04 | ✅ 依赖混淆扫描 + 工具验证 |
+| 意外代码执行 | ASI-05 | ✅ Agent Runtime 执行环 + 沙箱 |
 | 内存投毒 | ASI-06 | ✅ 带完整性检查的情节记忆 |
 | 不安全的代理间通信 | ASI-07 | ✅ AgentMesh 加密通道 + 信任门控 |
 | 级联故障 | ASI-08 | ✅ 断路器 + SLO 执行 |
