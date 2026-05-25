@@ -37,6 +37,11 @@ bypassable
 bytecodes
 caas
 caplog
+AEAD
+ciphertext
+lockfile
+RustCrypto
+RustSec
 capsys
 carloshvp
 carryforward
