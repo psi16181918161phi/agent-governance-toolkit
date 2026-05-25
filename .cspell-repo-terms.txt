@@ -39,6 +39,7 @@ caas
 caplog
 AEAD
 ciphertext
+clippy
 lockfile
 RustCrypto
 RustSec
