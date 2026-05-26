@@ -60,11 +60,11 @@
     "expected_verdict": "deny"
   },
   {
-    "id": "asi06-context-budget-exceeded",
-    "_comment": "Threshold on main is 16384; 17000 triggers the rule directly",
+    "id": "saas-cost-control-hit",
+    "_comment": "saas-cost-control-ceiling fires at >10000 (priority 95) before asi06-context-budget-limit at >16384 (priority 90)",
     "input": {"token_count": 17000},
-    "expected_verdict": "deny",
-    "expected_rule": "asi06-context-budget-limit"
+    "expected_verdict": "block",
+    "expected_rule": "saas-cost-control-ceiling"
   },
   {
     "id": "asi08-tool-call-limit-exceeded",
