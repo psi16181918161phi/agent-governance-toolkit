@@ -562,3 +562,55 @@ func contains(s []string, x string) bool {
 	}
 	return false
 }
+
+// ── Regressions for dialect modifiers and example loader ────────────────────
+
+func TestSQL_InsertOrReplaceIntoTarget(t *testing.T) {
+	cases := []string{
+		"INSERT OR REPLACE INTO protected (id) VALUES (1)",
+		"INSERT OR IGNORE INTO protected (id) VALUES (1)",
+		"INSERT IGNORE INTO protected (id) VALUES (1)",
+	}
+	for _, q := range cases {
+		f := sql(q)
+		if f["verb"] != "INSERT" || f["target"] != "protected" {
+			t.Errorf("%s: got %+v", q, f)
+		}
+	}
+}
+
+func TestSQL_UpdateOnlyTarget(t *testing.T) {
+	f := sql("UPDATE ONLY protected SET v = 1 WHERE id = 2")
+	if f["target"] != "protected" {
+		t.Fatalf("got %+v", f)
+	}
+}
+
+func TestSQL_DeleteFromOnlyTarget(t *testing.T) {
+	f := sql("DELETE FROM ONLY protected WHERE id = 2")
+	if f["verb"] != "DELETE" || f["target"] != "protected" {
+		t.Fatalf("got %+v", f)
+	}
+}
+
+func TestSQL_CreateOrReplaceTarget(t *testing.T) {
+	f := sql("CREATE OR REPLACE VIEW protected AS SELECT 1")
+	if f["verb"] != "CREATE" || f["target"] != "protected" {
+		t.Fatalf("got %+v", f)
+	}
+}
+
+func TestExampleYAML_LoadsCleanly(t *testing.T) {
+	path := "../../examples/policy-yaml/wire-protocol-rules.yaml"
+	engine := NewPolicyEngine(nil)
+	if err := engine.LoadFromYAML(path); err != nil {
+		t.Fatalf("LoadFromYAML failed: %v", err)
+	}
+	// A DROP must be denied by the loaded ruleset.
+	ctx := map[string]any{
+		"sql": map[string]any{"query": "DROP TABLE production"},
+	}
+	if got := engine.Evaluate("db.exec", ctx); got != Deny {
+		t.Fatalf("example yaml did not deny DROP: got %v", got)
+	}
+}

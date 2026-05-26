@@ -469,21 +469,30 @@ func extractFunctions(query string) []string {
 }
 
 func pickTarget(query, verb string, tables []string) string {
+	// Optional modifier keywords that can appear between the verb and the
+	// target table in common SQL dialects:
+	//   INSERT [OR REPLACE | OR IGNORE | IGNORE] [INTO] <t>
+	//   UPDATE [ONLY] <t>
+	//   DELETE FROM [ONLY] <t>
+	//   CREATE [OR REPLACE] [TABLE|VIEW|...] <t>
+	const insertMods = `(?:OR\s+(?:REPLACE|IGNORE|ABORT|FAIL|ROLLBACK)\s+|IGNORE\s+)?`
+	const createMods = `(?:OR\s+REPLACE\s+)?`
+	const onlyMod = `(?:ONLY\s+)?`
+
 	var pat string
 	switch verb {
 	case "INSERT":
-		// Accept both `INSERT INTO <t>` and `INSERT <t>` (some dialects
-		// omit INTO). Go's RE2 has no lookahead, so we use an optional
-		// INTO group in a single pattern.
-		pat = `\bINSERT\s+(?:INTO\s+)?` + identPattern
+		pat = `\bINSERT\s+` + insertMods + `(?:INTO\s+)?` + identPattern
 	case "MERGE":
 		pat = `\bINTO\s+` + identPattern
 	case "UPDATE":
-		pat = `\bUPDATE\s+` + identPattern
+		pat = `\bUPDATE\s+` + onlyMod + identPattern
 	case "DELETE":
-		pat = `\bDELETE\s+FROM\s+` + identPattern
-	case "DROP", "TRUNCATE", "ALTER", "CREATE", "RENAME":
+		pat = `\bDELETE\s+FROM\s+` + onlyMod + identPattern
+	case "DROP", "TRUNCATE", "ALTER", "RENAME":
 		pat = `\b` + verb + `\s+(?:TABLE|VIEW|INDEX|SEQUENCE|SCHEMA|DATABASE|TRIGGER|FUNCTION|PROCEDURE)?\s*(?:IF\s+(?:NOT\s+)?EXISTS\s+)?` + identPattern
+	case "CREATE":
+		pat = `\bCREATE\s+` + createMods + `(?:TABLE|VIEW|INDEX|SEQUENCE|SCHEMA|DATABASE|TRIGGER|FUNCTION|PROCEDURE)?\s*(?:IF\s+(?:NOT\s+)?EXISTS\s+)?` + identPattern
 	case "GRANT", "REVOKE":
 		pat = `\bON\s+(?:TABLE\s+)?` + identPattern
 	default:
@@ -493,7 +502,7 @@ func pickTarget(query, verb string, tables []string) string {
 		return normalizeIdent(m[1])
 	}
 	if verb == "DELETE" {
-		if m := reCompile(`\bFROM\s+` + identPattern).FindStringSubmatch(query); m != nil {
+		if m := reCompile(`\bFROM\s+` + onlyMod + identPattern).FindStringSubmatch(query); m != nil {
 			return normalizeIdent(m[1])
 		}
 	}
