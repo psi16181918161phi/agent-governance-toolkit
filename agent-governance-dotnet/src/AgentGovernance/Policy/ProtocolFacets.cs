@@ -436,9 +436,9 @@ public static partial class ProtocolFacets
         var result = new List<string>();
         foreach (var re in patterns)
         {
-            foreach (var name in re.Matches(query).Cast<Match>().Select(m => NormalizeIdent(m.Groups[1].Value)))
+            foreach (var name in re.Matches(query).Cast<Match>().Select(m => NormalizeIdent(m.Groups[1].Value)).Where(name => name.Length > 0))
             {
-                if (name.Length > 0 && seen.Add(name)) result.Add(name);
+                if (seen.Add(name)) result.Add(name);
             }
         }
         return result;
