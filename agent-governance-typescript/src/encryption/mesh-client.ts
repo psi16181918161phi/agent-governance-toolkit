@@ -225,12 +225,12 @@ export class MeshClient {
       // The caller can override by passing their own `authSigner` via
       // `registryClientOptions`.
       const callerOpts = options.registryClientOptions ?? {};
+      // eslint-disable-next-line @typescript-eslint/no-this-alias
+      const self = this;
       const authSigner = callerOpts.authSigner ?? {
         get did() { return self.activeDid; }, // late-bind: DID can change after register
         sign: (m: Uint8Array) => options.keyManager.signMessage(m),
       };
-      // eslint-disable-next-line @typescript-eslint/no-this-alias
-      const self = this;
       this.registry = new RegistryClient({
         baseUrl: options.registryUrl,
         ...callerOpts,
