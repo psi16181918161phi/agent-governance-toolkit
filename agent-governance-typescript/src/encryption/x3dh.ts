@@ -24,7 +24,22 @@ const randomBytes = (n: number): Uint8Array => {
 
 const X3DH_INFO = new TextEncoder().encode("AgentMesh_X3DH_v1");
 const KEY_LEN = 32;
-const FF_SALT = new Uint8Array(32).fill(0xff);
+// Spec-compliant X3DH KDF prefix per Signal §2.2:
+//   IKM = F (0xFF × 32) || concat(DH outputs)
+//   salt = 0x00 × 32   (HKDF salt is the empty/zero block, NOT the F prefix)
+//   info = "AgentMesh_X3DH_v1"
+// An earlier TS implementation incorrectly passed FF×32 as the HKDF
+// *salt* while feeding bare dhConcat as IKM — that produced a
+// different derived key than the spec, breaking interop with any
+// spec-compliant peer (e.g. the AGT Python SDK, which was fixed
+// upstream in `agent-mesh/src/agentmesh/encryption/x3dh.py` per the
+// comment block beginning "The previous implementation passed 0xFF×32
+// as the HKDF *salt*..."). Aligning TS with the spec here unblocks
+// Python↔TS cross-runtime mesh — KNOCK already routes end-to-end but
+// the first encrypted message decrypt fails with "invalid tag" under
+// the legacy keys.
+const F_PREFIX = new Uint8Array(32).fill(0xff);
+const ZERO_SALT = new Uint8Array(32);
 
 export interface X25519KeyPair {
   privateKey: Uint8Array;
@@ -77,7 +92,11 @@ export function ed25519ToX25519(
 }
 
 function kdf(ikm: Uint8Array): Uint8Array {
-  return hkdf(sha256, ikm, FF_SALT, X3DH_INFO, KEY_LEN);
+  // Spec: HKDF(salt=0x00×32, IKM=F||dhConcat, info=X3DH_INFO, len=KEY_LEN).
+  // Callers pass `dhConcat` as `ikm`; we prepend F here so every code path
+  // (initiator + responder) gets the prefix exactly once.
+  const fullIkm = concat(F_PREFIX, ikm);
+  return hkdf(sha256, fullIkm, ZERO_SALT, X3DH_INFO, KEY_LEN);
 }
 
 function concat(...arrays: Uint8Array[]): Uint8Array {
