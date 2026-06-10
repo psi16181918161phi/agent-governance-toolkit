@@ -4,7 +4,7 @@
 
 The Agent Governance Toolkit provides **deterministic application-layer interception**: every agent action is evaluated against policy **before execution**, at sub-millisecond latency. For high-security environments, composes with container/VM isolation for defense-in-depth.
 
-Each major component has a formal RFC 2119 specification with conformance tests. See [Specifications](specs/) for the full list.
+Each major component has a formal RFC 2119 specification with conformance tests. See [Specifications](adr/) for architecture decisions, or [Protocol Specifications](../specs/AGENT-OS-POLICY-ENGINE-1.0.md) for detailed specs.
 
 ## Video Walkthrough Series
 
