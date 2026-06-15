@@ -63,6 +63,18 @@ REGISTERED_PACKAGES = {
     "agt-policies", "agt_policies",
     "agent-control-specification", "agent_control_specification",
     "acs-generator", "acs_generator",
+    # Standalone donation components. These are first-party packages being
+    # prepared for independent donation; they are path-referenced today and
+    # reserved/published as part of the donation. Listed here (both hyphen and
+    # underscore forms) so the dependency-confusion gate treats them as
+    # first-party, not as unregistered third-party names.
+    "agent-identity-engine", "agent_identity_engine",
+    "agent-lifecycle-engine", "agent_lifecycle_engine",
+    "agent-observability-engine", "agent_observability_engine",
+    "agent-sandbox-engine", "agent_sandbox_engine",
+    "agent-mesh-engine", "agent_mesh_engine",
+    "agent-governance-toolkit-context", "agent_governance_toolkit_context",
+    "mcp-governance", "mcp_governance",
     # Common dependencies
     "pydantic", "pyyaml", "cryptography", "pynacl", "httpx", "aiohttp",
     "fastapi", "uvicorn", "requests", "packaging", "structlog", "click", "rich", "numpy", "scipy",
@@ -233,6 +245,16 @@ REGISTERED_CARGO_PACKAGES = {
     "pyo3", "pyo3-build-config",
     # Vendored ACS workspace crates (internal, path-referenced)
     "agent_control_specification", "agent_control_specification_core",
+    # Standalone donation component crates (internal, path-referenced workspace
+    # crates for the Rust cores being prepared for donation).
+    "identity_engine", "identity_engine_core",
+    "lifecycle_engine", "lifecycle_engine_core",
+    "observability_engine", "observability_engine_core",
+    "sandbox_engine", "sandbox_engine_core",
+    "mesh_engine", "mesh_engine_core",
+    "mcp_governance", "mcp_governance_core",
+    # Real crates.io dependencies used by the donation component cores.
+    "uuid", "curve25519-dalek", "crypto_box",
 }
 
 # Patterns that are always safe (not package names)

@@ -48,9 +48,25 @@ SKIP_DIRS = {
 #                       vendored ACS engine. It is deliberately on the 5.x line
 #                       to signal the policy-layer contract version and must not
 #                       be dragged back to the toolkit version.
+#   - standalone donation components : the components being prepared for
+#                       independent donation (ACS, the engines, the contracts,
+#                       and the agt-governance bridge) version on their own
+#                       pre-1.0 cadence, separate from the AGT toolkit release
+#                       line, so they are exempt from the lockstep version.
 EXEMPT_PREFIXES = (
     "policy-engine/",
     "agent-governance-python/agt-policies/",
+    "acs/",
+    "identity-engine/",
+    "lifecycle-engine/",
+    "observability-engine/",
+    "sandbox-engine/",
+    "mesh-engine/",
+    "mcp-governance/",
+    "drift/",
+    "context/",
+    "governance-contracts/",
+    "agent-governance-python/agt-governance/",
 )
 
 

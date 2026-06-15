@@ -1,0 +1,49 @@
+[build-system]
+requires = ["hatchling>=1.18"]
+build-backend = "hatchling.build"
+
+[project]
+name = "agt-governance"
+version = "0.1.0"
+description = "AGT host wiring that composes the standalone governance components into one pipeline"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11"
+authors = [{ name = "Microsoft Corporation", email = "agentgovtoolkit@microsoft.com" }]
+keywords = ["agents", "governance", "policy", "identity", "observability"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+]
+
+# AGT re-imports each standalone component as an ordinary published dependency
+# and adds the host-side enrichers, sinks, and pipeline that wire them together
+# through the governance contracts. This is the bridge layer.
+dependencies = [
+  "agent-identity-engine>=0.1.0,<0.2.0",
+  "agent-lifecycle-engine>=0.1.0,<0.2.0",
+  "agent-observability-engine>=0.1.0,<0.2.0",
+  "agent-sandbox-engine>=0.1.0,<0.2.0",
+  "agent-mesh-engine>=0.1.0,<0.2.0",
+  "agent-governance-toolkit-drift>=4.0.0",
+  "agent-governance-toolkit-context>=3.0.0",
+]
+
+[project.optional-dependencies]
+# The production policy provider is the ACS standalone, reached through the
+# mcp-governance composite which already wires live ACS. The pipeline accepts
+# any PolicyPort, so these stay optional and a built-in RulePolicy is the default.
+acs = [
+  "agent-control-specification>=0.3.1b0,<0.4.0",
+  "mcp-governance>=0.1.0,<0.2.0",
+]
+dev = ["pytest>=8.0.0,<9.0", "ruff>=0.6.0,<1.0"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/agt_governance"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
