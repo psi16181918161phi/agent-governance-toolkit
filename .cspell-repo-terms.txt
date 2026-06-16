@@ -820,3 +820,5 @@ unvalidated
 userinfo
 winres
 worktree
+commonpath
+mktemp
