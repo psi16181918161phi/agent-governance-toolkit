@@ -16,7 +16,7 @@ from __future__ import annotations
 import os
 import time
 
-from fastapi import FastAPI
+from fastapi import APIRouter, FastAPI
 
 from agentmesh.engine_api.errors import register_error_handlers
 from agentmesh.engine_api.openapi import inject_capability_extension
@@ -52,6 +52,24 @@ _ROUTE_MODULES = (
 )
 
 
+def _register_routes_flat(app: FastAPI, router: APIRouter) -> None:
+    """Register a router's routes directly onto ``app`` at the top level.
+
+    FastAPI 0.118+/Starlette 1.x changed :meth:`FastAPI.include_router` so it
+    appends a single ``_IncludedRouter`` proxy to ``app.router.routes`` instead
+    of flattening the sub-router's :class:`~fastapi.routing.APIRoute` objects
+    into the app's route list. :func:`inject_capability_extension` iterates
+    ``app.routes`` looking for top-level ``APIRoute`` instances, so routes hidden
+    behind that proxy never receive their ``x-capability-flags`` extension (and,
+    worse, the loop cannot tell they are missing). Appending each ``APIRoute``
+    directly keeps every operation visible to the capability hook across all
+    supported FastAPI versions. The route modules use plain, prefix-free routers
+    with absolute ``/api/v1`` paths and per-route tags, so direct registration is
+    equivalent to ``include_router`` here.
+    """
+    app.router.routes.extend(router.routes)
+
+
 def create_app(policy_dir: str | None = None) -> FastAPI:
     """Build and return the Engine API FastAPI application.
 
@@ -79,7 +97,7 @@ def create_app(policy_dir: str | None = None) -> FastAPI:
     register_error_handlers(app)
 
     for module in _ROUTE_MODULES:
-        app.include_router(module.router)
+        _register_routes_flat(app, module.router)
 
     # Must run after every router is registered: it validates that every in-schema
     # operation carries capability flags and injects the x-capability-flags extension.
