@@ -42,6 +42,7 @@
     "splitlines",
     "tomllib",
     "uvicorn",
+    "levelno",
     "tomli",
     "fastapi",
     "starlette",
