@@ -20,6 +20,7 @@ it, FastAPI would emit its built-in ``{"detail": [...]}`` body instead of the en
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Final
 
 from fastapi import Request
@@ -28,6 +29,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from starlette.exceptions import HTTPException as StarletteHTTPException
+
+logger = logging.getLogger(__name__)
 
 # ── Standard error codes (section 10.3) ──────────────────────────────────────
 POLICY_NOT_FOUND: Final = "POLICY_NOT_FOUND"
@@ -139,6 +142,9 @@ async def _http_exception_handler(
 
 
 async def _unhandled_exception_handler(_request: Request, exc: Exception) -> JSONResponse:
+    # Log the full traceback server-side; the client only receives the sanitized 500 below
+    # (no exception detail), so without this the original error would be lost entirely.
+    logger.exception("Unhandled exception in Engine API request")
     return _envelope_response(500, INTERNAL_ERROR, "Internal engine error")
 
 

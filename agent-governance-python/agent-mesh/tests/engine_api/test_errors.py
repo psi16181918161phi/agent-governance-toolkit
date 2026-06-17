@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 
 pytest.importorskip("fastapi")
@@ -102,6 +104,17 @@ class TestHandlers:
         assert body["status"] == 500
         # The original exception text must not leak to the client.
         assert "kaboom" not in body["message"]
+
+    def test_unhandled_exception_is_logged(self, handler_client, caplog):
+        # The sanitized 500 carries no exception detail, so the handler must log the full
+        # traceback server-side for diagnosis.
+        with caplog.at_level(logging.ERROR, logger="agentmesh.engine_api.errors"):
+            resp = handler_client.get("/boom")
+        assert resp.status_code == 500
+        assert any(
+            r.name == "agentmesh.engine_api.errors" and r.levelno == logging.ERROR and r.exc_info
+            for r in caplog.records
+        )
 
     def test_validation_error_remapped_to_envelope(self, handler_client):
         resp = handler_client.get("/validated")  # missing required ?n=

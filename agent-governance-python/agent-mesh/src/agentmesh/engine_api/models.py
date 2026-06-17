@@ -75,7 +75,9 @@ class FixtureInput(BaseModel):
 class TestRequest(BaseModel):
     fixtures: list[FixtureInput] = Field(..., description="Inline fixtures to execute")
     policy_dir: str | None = Field(
-        None, description="Policy directory override (defaults to engine policy_dir)"
+        None,
+        max_length=1024,
+        description="Policy directory override (defaults to engine policy_dir)",
     )
 
 

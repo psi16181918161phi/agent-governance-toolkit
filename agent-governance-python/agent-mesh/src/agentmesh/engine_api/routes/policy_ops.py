@@ -76,11 +76,21 @@ def _safe_policy_dir(request: Request, override: str | None) -> str:
     candidate = os.path.realpath(override)
     if candidate == base:
         return base
-    # Containment guard: the resolved override must sit strictly inside the engine
-    # policy root, otherwise an HTTP client could steer the file-reading replay engine
-    # at arbitrary server paths. The ``startswith`` check on the normalized (realpath)
-    # value is the recognized path-traversal sanitizer.
-    if not candidate.startswith(base + os.sep):
+    # Containment guard: the resolved override must stay within the engine policy root,
+    # or an HTTP client could steer the file-reading replay engine at arbitrary server
+    # paths. ``Path.is_relative_to`` (Python 3.11+) is the readable check and avoids the
+    # trailing-separator edge case of a bare ``startswith``.
+    if not Path(candidate).is_relative_to(base):
+        raise ApiError(
+            422,
+            FIXTURE_LOAD_ERROR,
+            "policy_dir override must resolve within the engine policy directory",
+            {"policy_dir": override},
+        )
+    # Equivalent normalized ``startswith`` barrier, kept because CodeQL's py/path-injection
+    # query recognizes this form (not ``is_relative_to``) as the sanitizer for the resolved
+    # value returned below. ``rstrip`` avoids a doubled separator when ``base`` is the root.
+    if not candidate.startswith(base.rstrip(os.sep) + os.sep):
         raise ApiError(
             422,
             FIXTURE_LOAD_ERROR,

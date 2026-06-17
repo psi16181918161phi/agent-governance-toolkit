@@ -164,6 +164,14 @@ class TestTestPolicyWithFakeEngine:
         assert resp.status_code == 422
         assert resp.json()["code"] == "FIXTURE_LOAD_ERROR"
 
+    def test_policy_dir_override_too_long_is_validation_error(self, client):
+        # The field is bounded (max_length=1024) so an oversized value is rejected by request
+        # validation before any filesystem path operation runs.
+        body = dict(_TEST_BODY, policy_dir="x" * 1025)
+        resp = client.post("/api/v1/policy/test", json=body)
+        assert resp.status_code == 422
+        assert resp.json()["code"] == "VALIDATION_ERROR"
+
 
 class TestTestPolicyWithRealEngine:
     """End-to-end against the real replay engine when agent-compliance is installed."""
