@@ -101,24 +101,29 @@ Where:
 |--------|---------|
 | **σ\_L** | The vouchee's own reputation score (low-trust agent) |
 | **ω** | Risk weight — how much of the voucher's bond translates to trust (0.0–1.0) |
-| **σ\_H** | The voucher's bonded reputation amount (high-trust agent's stake) |
+| **σ\_H** | The voucher's **bonded** amount = ``voucher_sigma × bond_pct`` (not the voucher's full σ) |
 
 This formula lets a new agent with low reputation (σ\_L = 0.30) participate
-meaningfully when backed by a trusted agent (σ\_H = 0.85, ω = 0.5):
+meaningfully when backed by a trusted agent. If the voucher's σ is 0.85 and it
+bonds the default 20% (`bond_pct = 0.20`), then σ\_H = 0.85 × 0.20 = 0.17, so
+with ω = 0.5:
 
 ```
-σ_eff = 0.30 + (0.5 × 0.85) = 0.725
+σ_eff = 0.30 + (0.5 × 0.17) = 0.385
 ```
 
-The `compute_eff_score` method computes this:
+The `compute_eff_score` method computes this (using the bonds recorded by
+`vouch`):
 
 ```python
+engine.vouch("did:mesh:voucher", "did:mesh:agent-b", "session-123", 0.85, bond_pct=0.20)
 eff = engine.compute_eff_score(
     vouchee_did="did:mesh:agent-b",
     session_id="session-123",
     vouchee_sigma=0.30,    # σ_L
     risk_weight=0.5,       # ω
 )
+# eff == 0.385
 ```
 
 > **Multiple vouchers:** when several agents sponsor the same vouchee, their bonds add

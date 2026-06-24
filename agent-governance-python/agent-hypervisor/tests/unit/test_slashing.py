@@ -87,3 +87,38 @@ class TestSlashingEngine:
         # v1: 0.8 * (1-0.3) = 0.56, v2: 0.7 * (1-0.3) = 0.49
         assert abs(scores["did:mesh:v1"] - 0.56) < 1e-9
         assert abs(scores["did:mesh:v2"] - 0.49) < 1e-9
+
+    def test_negative_risk_weight_cannot_reward_voucher(self):
+        """A penalty must never increase a score; risk_weight is clamped to [0,1]."""
+        scores = {"did:mesh:bad": 0.5, "did:mesh:sponsor": 0.9}
+        self.vouching.vouch("did:mesh:sponsor", "did:mesh:bad", self.session, 0.9)
+        self.slashing.slash(
+            vouchee_did="did:mesh:bad",
+            session_id=self.session,
+            vouchee_sigma=0.5,
+            risk_weight=-1.0,  # would reward (×2) if unclamped
+            reason="x",
+            agent_scores=scores,
+        )
+        assert scores["did:mesh:sponsor"] <= 0.9
+
+    def test_cascade_flows_through_untracked_intermediate(self):
+        """A voucher missing from agent_scores must not block the cascade upstream.
+
+        A → B → C: slashing C must still clip A (known) even though B is not in
+        agent_scores.
+        """
+        self.vouching.vouch("did:mesh:A", "did:mesh:B", self.session, 0.9)
+        self.vouching.vouch("did:mesh:B", "did:mesh:C", self.session, 0.9)
+        scores = {"did:mesh:C": 0.5, "did:mesh:A": 0.8}  # B intentionally absent
+        result = self.slashing.slash(
+            vouchee_did="did:mesh:C",
+            session_id=self.session,
+            vouchee_sigma=0.5,
+            risk_weight=0.5,
+            reason="x",
+            agent_scores=scores,
+        )
+        clipped = {c.voucher_did for c in result.voucher_clips}
+        assert clipped == {"did:mesh:A"}  # B skipped (untracked), A reached
+        assert scores["did:mesh:A"] == pytest.approx(0.4)  # 0.8 * (1-0.5)

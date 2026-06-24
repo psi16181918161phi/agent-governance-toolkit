@@ -2,6 +2,8 @@
 # Licensed under the MIT License.
 """Tests for the sponsorship & bonding engine and liability matrix."""
 
+from datetime import UTC, datetime, timedelta
+
 import pytest
 
 from hypervisor.liability import LiabilityMatrix
@@ -104,6 +106,31 @@ class TestVouchingEngine:
         self.engine.vouch("did:mesh:high", "did:mesh:a", self.session, 0.9, bond_pct=0.5)
         with pytest.raises(VouchingError, match="exceed max exposure"):
             self.engine.vouch("did:mesh:high", "did:mesh:b", self.session, 0.9, bond_pct=0.5)
+
+    def test_max_exposure_zero_forbids_all_bonding(self):
+        """max_exposure=0.0 means no bonding (must not be clobbered to the default)."""
+        engine = VouchingEngine(max_exposure=0.0)
+        assert engine.max_exposure == 0.0
+        with pytest.raises(VouchingError, match="exceed max exposure"):
+            engine.vouch("did:mesh:high", "did:mesh:low", self.session, 0.9, bond_pct=0.2)
+
+    @pytest.mark.parametrize("bad_pct", [-0.1, 1.5, -10.0])
+    def test_invalid_bond_pct_rejected(self, bad_pct):
+        """bond_pct outside [0,1] is rejected (negatives would invert exposure)."""
+        with pytest.raises(VouchingError, match=r"bond_pct .* must be within"):
+            self.engine.vouch("did:mesh:high", "did:mesh:low", self.session, 0.9, bond_pct=bad_pct)
+
+    def test_expired_vouch_excluded(self):
+        """An expired bond grants no trust, no exposure, and is not an active sponsor."""
+        past = datetime.now(UTC) - timedelta(seconds=5)
+        self.engine.vouch(
+            "did:mesh:high", "did:mesh:low", self.session, 0.9, bond_pct=0.5, expiry=past
+        )
+        assert self.engine.get_vouchers_for("did:mesh:low", self.session) == []
+        assert self.engine.get_total_exposure("did:mesh:high", self.session) == 0.0
+        # No boost: eff_score collapses to the vouchee's own sigma.
+        eff = self.engine.compute_eff_score("did:mesh:low", self.session, 0.3, risk_weight=1.0)
+        assert eff == pytest.approx(0.3)
 
 
 class TestLiabilityMatrix:

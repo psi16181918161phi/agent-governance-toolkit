@@ -71,15 +71,19 @@ class SlashingEngine:
         Args:
             agent_scores: live score map, mutated in place. The vouchee is set to
                 ``0.0``; each clipped voucher is reduced to
-                ``max(SIGMA_FLOOR, sigma * (1 - risk_weight))``. Vouchers absent
-                from this map are skipped (their score is unknown to the caller).
+                ``max(SIGMA_FLOOR, sigma * (1 - risk_weight))``. ``risk_weight`` is
+                clamped to ``[0, 1]`` so a penalty can never increase a score. A
+                voucher absent from this map is not scored (its sigma is unknown to
+                the caller) but the cascade still propagates THROUGH it to any known
+                upstream guarantors.
         """
+        omega = min(1.0, max(0.0, risk_weight))
         agent_scores[vouchee_did] = 0.0
 
         clips: list[VoucherClip] = []
         visited: set[str] = {vouchee_did}
         reached = self._clip_chain(
-            vouchee_did, session_id, risk_weight, agent_scores, clips, visited, cascade_depth + 1
+            vouchee_did, session_id, omega, agent_scores, clips, visited, cascade_depth + 1
         )
 
         result = SlashResult(
@@ -115,23 +119,27 @@ class SlashingEngine:
         reached = depth - 1
         for record in self._vouching.get_vouchers_for(vouchee_did, session_id):
             voucher = record.voucher_did
-            if voucher in visited or voucher not in agent_scores:
+            if voucher in visited:
                 continue
             visited.add(voucher)
 
-            sigma_before = agent_scores[voucher]
-            sigma_after = max(self.SIGMA_FLOOR, sigma_before * (1.0 - risk_weight))
-            agent_scores[voucher] = sigma_after
-            clips.append(
-                VoucherClip(
-                    voucher_did=voucher,
-                    sigma_before=sigma_before,
-                    sigma_after=sigma_after,
-                    risk_weight=risk_weight,
-                    vouch_id=record.vouch_id,
+            # A voucher whose score the caller does not track cannot be clipped,
+            # but the cascade must still flow through it to known upstream sponsors.
+            if voucher in agent_scores:
+                sigma_before = agent_scores[voucher]
+                sigma_after = max(self.SIGMA_FLOOR, sigma_before * (1.0 - risk_weight))
+                agent_scores[voucher] = sigma_after
+                clips.append(
+                    VoucherClip(
+                        voucher_did=voucher,
+                        sigma_before=sigma_before,
+                        sigma_after=sigma_after,
+                        risk_weight=risk_weight,
+                        vouch_id=record.vouch_id,
+                    )
                 )
-            )
-            reached = max(reached, depth)
+                reached = max(reached, depth)
+
             reached = max(
                 reached,
                 self._clip_chain(

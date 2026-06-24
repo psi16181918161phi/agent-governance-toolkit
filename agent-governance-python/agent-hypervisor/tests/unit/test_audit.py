@@ -123,7 +123,7 @@ class TestEphemeralGC:
         assert result.purged_caches == 1
         # Delta hash chain is retained for audit; VFS + caches are reclaimed.
         assert result.retained_deltas == 20
-        assert result.retained_hash is True
+        assert result.retained_hash
         assert result.storage_saved_bytes == 1_500_000
         assert result.savings_pct > 0
 
@@ -131,7 +131,7 @@ class TestEphemeralGC:
         gc = EphemeralGC()
         result = gc.collect(session_id="session:2")
         assert gc.is_purged("session:2")
-        assert result.retained_hash is True
+        assert result.retained_hash
 
     def test_retention_policy_expires_old_deltas(self):
         from datetime import datetime, timedelta

@@ -50,8 +50,8 @@ class VouchingEngine:
     """
     Joint-liability sponsorship engine.
 
-    Enforces voucher qualification, acyclicity, and per-voucher exposure
-    limits, and computes a vouchee's effective score from active bonds.
+    Enforces voucher qualification, cycle-free sponsorship, and per-voucher
+    exposure limits, and computes a vouchee's effective score from active bonds.
     """
 
     SCORE_SCALE = VOUCHING_SCORE_SCALE
@@ -61,7 +61,9 @@ class VouchingEngine:
 
     def __init__(self, max_exposure: float | None = None) -> None:
         self._vouches: dict[str, VouchRecord] = {}
-        self.max_exposure = max_exposure or self.DEFAULT_MAX_EXPOSURE
+        self.max_exposure = (
+            self.DEFAULT_MAX_EXPOSURE if max_exposure is None else max_exposure
+        )
 
     @property
     def vouch_count(self) -> int:
@@ -81,8 +83,9 @@ class VouchingEngine:
 
         Raises:
             VouchingError: if the voucher sponsors itself, has a sigma below
-                ``MIN_VOUCHER_SCORE``, would create a cycle in the session's
-                liability graph, or would exceed its maximum bonded exposure.
+                ``MIN_VOUCHER_SCORE``, supplies a ``bond_pct`` outside ``[0, 1]``,
+                would create a cycle in the session's liability graph, or would
+                exceed its maximum bonded exposure.
         """
         if voucher_did == vouchee_did:
             raise VouchingError("Cannot sponsor for yourself")
@@ -90,12 +93,16 @@ class VouchingEngine:
             raise VouchingError(
                 f"Voucher sigma {voucher_sigma:.3f} is below minimum {self.MIN_VOUCHER_SCORE:.2f}"
             )
+
+        pct = self.DEFAULT_BOND_PCT if bond_pct is None else bond_pct
+        if not 0.0 <= pct <= 1.0:
+            raise VouchingError(f"bond_pct {pct} must be within [0, 1]")
+
         if self._creates_cycle(voucher_did, vouchee_did, session_id):
             raise VouchingError(
                 f"Circular sponsorship: {vouchee_did} already sponsors {voucher_did}"
             )
 
-        pct = self.DEFAULT_BOND_PCT if bond_pct is None else bond_pct
         bonded_amount = voucher_sigma * pct
 
         max_bondable = self.max_exposure * voucher_sigma
@@ -127,28 +134,36 @@ class VouchingEngine:
     ) -> float:
         """Effective score: ``sigma_L + omega * sum(bonded_amount)``, capped at 1.0.
 
-        ``sigma_L`` is the vouchee's own score, ``omega`` the risk weight, and the
-        sum runs over the bonds of all active vouchers for the vouchee.
+        ``sigma_L`` is the vouchee's own score, ``omega`` the risk weight
+        (clamped to ``[0, 1]``), and the sum runs over the bonds of all active,
+        unexpired vouchers for the vouchee.
         """
+        omega = min(1.0, max(0.0, risk_weight))
         bonded_total = sum(
             v.bonded_amount for v in self._active_vouches_for(vouchee_did, session_id)
         )
-        return min(1.0, vouchee_sigma + risk_weight * bonded_total)
+        return min(1.0, vouchee_sigma + omega * bonded_total)
 
     def get_vouchers_for(self, agent_did: str, session_id: str) -> list[VouchRecord]:
-        """Get all sponsors for an agent in a session."""
+        """Get all active, unexpired sponsors for an agent in a session."""
         return [
             v
             for v in self._vouches.values()
-            if v.vouchee_did == agent_did and v.session_id == session_id and v.is_active
+            if v.vouchee_did == agent_did
+            and v.session_id == session_id
+            and v.is_active
+            and not v.is_expired
         ]
 
     def get_total_exposure(self, voucher_did: str, session_id: str) -> float:
-        """Total sigma a voucher has bonded across all its active vouches in a session."""
+        """Total sigma a voucher has bonded across its active, unexpired vouches in a session."""
         return sum(
             v.bonded_amount
             for v in self._vouches.values()
-            if v.voucher_did == voucher_did and v.session_id == session_id and v.is_active
+            if v.voucher_did == voucher_did
+            and v.session_id == session_id
+            and v.is_active
+            and not v.is_expired
         )
 
     def release_bond(self, vouch_id: str) -> None:
@@ -182,7 +197,7 @@ class VouchingEngine:
             return True
         adjacency: dict[str, list[str]] = {}
         for v in self._vouches.values():
-            if v.session_id == session_id and v.is_active:
+            if v.session_id == session_id and v.is_active and not v.is_expired:
                 adjacency.setdefault(v.voucher_did, []).append(v.vouchee_did)
 
         stack = [vouchee_did]
