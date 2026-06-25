@@ -2,10 +2,11 @@
 # Licensed under the MIT License.
 # Public Preview — basic implementation
 """
-Declarative Saga DSL — stub implementation.
+Declarative Saga DSL.
 
-Public Preview: DSL parsing is retained for basic step definitions only.
-Fan-out groups in DSL are ignored (sequential execution only).
+Parses step definitions and fan-out groups (with their declared policy and
+validated branch references). Execution of fan-out groups remains sequential;
+``sequential_steps`` still returns all steps.
 """
 
 from __future__ import annotations
@@ -106,12 +107,17 @@ class SagaDSLParser:
             step_ids.add(step.id)
             steps.append(step)
 
+        fan_outs = [
+            self._parse_fan_out(raw_fan_out, step_ids)
+            for raw_fan_out in definition.get("fan_out", [])
+        ]
+
         return SagaDefinition(
             name=name,
             session_id=session_id,
             saga_id=definition.get("saga_id", f"saga:{uuid.uuid4().hex[:8]}"),
             steps=steps,
-            fan_outs=[],
+            fan_outs=fan_outs,
             metadata=definition.get("metadata", {}),
         )
 
@@ -140,11 +146,25 @@ class SagaDSLParser:
         )
 
     def _parse_fan_out(self, raw: dict, valid_step_ids: set[str]) -> SagaDSLFanOut:
-        """Parse fan-out definition (Public Preview: retained for API compat)."""
-        return SagaDSLFanOut(
-            policy=FanOutPolicy.ALL_MUST_SUCCEED,
-            branch_step_ids=raw.get("branches", []),
-        )
+        """Parse a fan-out group, honoring its declared ``policy`` and
+        validating each branch against the parsed step IDs."""
+        branches = raw.get("branches", [])
+        for branch_id in branches:
+            if branch_id not in valid_step_ids:
+                raise SagaDSLError(
+                    f"Fan-out branch references unknown step '{branch_id}'"
+                )
+
+        policy_raw = raw.get("policy")
+        if policy_raw is None:
+            policy = FanOutPolicy.ALL_MUST_SUCCEED
+        else:
+            try:
+                policy = FanOutPolicy(policy_raw)
+            except ValueError as exc:
+                raise SagaDSLError(f"Invalid fan-out policy: '{policy_raw}'") from exc
+
+        return SagaDSLFanOut(policy=policy, branch_step_ids=list(branches))
 
     def to_saga_steps(self, definition: SagaDefinition) -> list[SagaStep]:
         """Convert a SagaDefinition into SagaStep objects."""

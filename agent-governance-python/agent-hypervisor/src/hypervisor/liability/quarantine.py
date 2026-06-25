@@ -2,16 +2,18 @@
 # Licensed under the MIT License.
 # Public Preview — basic implementation
 """
-Quarantine Manager — stub implementation.
+Quarantine Manager.
 
-Public Preview: quarantine is not enforced. Calls return safe defaults.
+Records quarantined agents in-memory, enforces them via ``is_quarantined``,
+expires them based on ``expires_at``, and supports manual release. State is
+process-local (not persisted across restarts).
 """
 
 from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from enum import Enum
 
 
@@ -55,7 +57,7 @@ class QuarantineRecord:
 
 class QuarantineManager:
     """
-    Quarantine stub (Public Preview: no quarantine enforcement).
+    Records and enforces agent quarantines (process-local, in-memory).
     """
 
     DEFAULT_QUARANTINE_SECONDS = 300
@@ -72,30 +74,66 @@ class QuarantineManager:
         duration_seconds: int | None = None,
         forensic_data: dict | None = None,
     ) -> QuarantineRecord:
-        """Log a quarantine request (Public Preview: no enforcement)."""
+        """Quarantine an agent for ``duration_seconds`` (default
+        ``DEFAULT_QUARANTINE_SECONDS``). The record is active and enforced
+        until it expires or is released."""
+        dur = duration_seconds if duration_seconds is not None else self.DEFAULT_QUARANTINE_SECONDS
+        now = datetime.now(UTC)
         record = QuarantineRecord(
             agent_did=agent_did,
             session_id=session_id,
             reason=reason,
             details=details,
-            is_active=False,
+            entered_at=now,
+            expires_at=now + timedelta(seconds=dur),
+            is_active=True,
+            forensic_data=forensic_data or {},
         )
         self._quarantines[record.quarantine_id] = record
         return record
 
     def release(self, agent_did: str, session_id: str) -> QuarantineRecord | None:
-        """No-op in Public Preview."""
-        return None
+        """Release an active quarantine early. Returns the released record,
+        or None if the agent is not currently quarantined."""
+        record = self._find_active(agent_did, session_id, include_expired=True)
+        if record is None:
+            return None
+        record.is_active = False
+        record.released_at = datetime.now(UTC)
+        return record
 
     def is_quarantined(self, agent_did: str, session_id: str) -> bool:
-        """Always False in Public Preview."""
-        return False
+        """True if the agent has an active, unexpired quarantine for the session."""
+        return self._find_active(agent_did, session_id) is not None
 
     def get_active_quarantine(self, agent_did: str, session_id: str) -> QuarantineRecord | None:
-        return None
+        return self._find_active(agent_did, session_id)
 
     def tick(self) -> list[QuarantineRecord]:
-        return []
+        """Expire any active records whose ``expires_at`` has passed. Returns
+        the records that were expired by this call."""
+        expired: list[QuarantineRecord] = []
+        now = datetime.now(UTC)
+        for record in self._quarantines.values():
+            if record.is_active and record.is_expired:
+                record.is_active = False
+                if record.released_at is None:
+                    record.released_at = record.expires_at or now
+                expired.append(record)
+        return expired
+
+    def _find_active(
+        self, agent_did: str, session_id: str, include_expired: bool = False
+    ) -> QuarantineRecord | None:
+        for record in self._quarantines.values():
+            if (
+                record.agent_did == agent_did
+                and record.session_id == session_id
+                and record.is_active
+                and (include_expired or not record.is_expired)
+            ):
+                return record
+        return None
 
     def get_history(
         self, agent_did: str | None = None, session_id: str | None = None
@@ -110,8 +148,8 @@ class QuarantineManager:
 
     @property
     def active_quarantines(self) -> list[QuarantineRecord]:
-        return []
+        return [r for r in self._quarantines.values() if r.is_active and not r.is_expired]
 
     @property
     def quarantine_count(self) -> int:
-        return 0
+        return len(self.active_quarantines)

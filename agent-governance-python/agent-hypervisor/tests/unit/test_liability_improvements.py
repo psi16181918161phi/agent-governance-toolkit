@@ -2,6 +2,8 @@
 # Licensed under the MIT License.
 """Tests for Shapley-value fault attribution, quarantine, and liability ledger."""
 
+from datetime import UTC, datetime, timedelta
+
 import pytest
 
 from hypervisor.liability.attribution import (
@@ -255,3 +257,152 @@ class TestLiabilityLedger:
         assert profile.quarantine_count == 0
         assert profile.risk_score == 0.0
         assert profile.recommendation == "admit"
+
+
+# ── Causal Attribution Distribution (BUG 2 fix) ─────────────────
+
+
+class TestCausalAttributionDistribution:
+    def test_risk_weights_distribute_liability(self):
+        """risk_weights keyed by agent DID override the causal split and are
+        normalized across participants (no longer 100% to the direct cause)."""
+        attributor = CausalAttributor()
+        actions = {
+            "did:a": [{"action_id": "act1", "step_id": "s1", "success": True}],
+            "did:b": [{"action_id": "act2", "step_id": "s2", "success": False}],
+        }
+        result = attributor.attribute(
+            "saga-1",
+            "sess-1",
+            actions,
+            failure_step_id="s2",
+            failure_agent_did="did:b",
+            risk_weights={"did:a": 0.5, "did:b": 0.5},
+        )
+        assert abs(result.get_liability("did:a") - 0.5) < 1e-9
+        assert abs(result.get_liability("did:b") - 0.5) < 1e-9
+
+    def test_risk_weights_proportional(self):
+        attributor = CausalAttributor()
+        actions = {
+            "did:a": [{"action_id": "act1", "step_id": "s1", "success": False}],
+            "did:b": [{"action_id": "act2", "step_id": "s2", "success": False}],
+        }
+        result = attributor.attribute(
+            "saga-1",
+            "sess-1",
+            actions,
+            failure_step_id="s2",
+            failure_agent_did="did:b",
+            risk_weights={"did:a": 3.0, "did:b": 1.0},
+        )
+        assert abs(result.get_liability("did:a") - 0.75) < 1e-9
+        assert abs(result.get_liability("did:b") - 0.25) < 1e-9
+
+    def test_multiple_failed_agents_share_liability(self):
+        """Without weights, two failed agents on the chain share liability;
+        the direct cause keeps the larger share but not 100%."""
+        attributor = CausalAttributor()
+        actions = {
+            "agent-a": [{"action_id": "act1", "step_id": "s1", "success": False}],
+            "agent-b": [{"action_id": "act2", "step_id": "s2", "success": False}],
+        }
+        result = attributor.attribute("saga-1", "sess-1", actions, "s2", "agent-b")
+        a = result.get_liability("agent-a")
+        b = result.get_liability("agent-b")
+        assert a > 0.0
+        assert b > a
+        assert b < 1.0
+        assert abs((a + b) - 1.0) < 1e-9
+
+    def test_post_failure_cascade_excluded(self):
+        """Agents that fail after the root failure are cascade effects, not
+        causes, so the direct cause gets full liability."""
+        attributor = CausalAttributor()
+        actions = {
+            "a": [{"action_id": "a1", "step_id": "s1", "success": False}],
+            "b": [{"action_id": "b1", "step_id": "s2", "success": False}],
+            "c": [{"action_id": "c1", "step_id": "s3", "success": False}],
+        }
+        result = attributor.attribute("saga-1", "sess-1", actions, "s1", "a")
+        assert result.get_liability("a") == 1.0
+        assert result.get_liability("b") == 0.0
+        assert result.get_liability("c") == 0.0
+        assert result.causal_chain_length == 1
+
+    def test_causal_chain_length_reflects_chain(self):
+        attributor = CausalAttributor()
+        actions = {
+            "a": [{"action_id": "a1", "step_id": "s1", "success": True}],
+            "b": [{"action_id": "b1", "step_id": "s2", "success": False}],
+            "c": [{"action_id": "c1", "step_id": "s3", "success": True}],
+        }
+        result = attributor.attribute("saga-1", "sess-1", actions, "s2", "b")
+        # Chain is s1, s2 (up to and including the failure); s3 is excluded.
+        assert result.causal_chain_length == 2
+
+
+# ── Quarantine Enforcement (BUG 1 fix) ──────────────────────────
+
+
+class TestQuarantineEnforcement:
+    def test_quarantine_is_recorded_and_enforced(self):
+        mgr = QuarantineManager()
+        record = mgr.quarantine("did:bad", "s", QuarantineReason.RING_BREACH)
+        assert record.is_active
+        assert mgr.is_quarantined("did:bad", "s")
+        assert mgr.quarantine_count == 1
+        assert record in mgr.active_quarantines
+        assert mgr.get_active_quarantine("did:bad", "s") is record
+
+    def test_unrelated_agent_not_quarantined(self):
+        mgr = QuarantineManager()
+        mgr.quarantine("did:bad", "s", QuarantineReason.MANUAL)
+        assert not mgr.is_quarantined("did:other", "s")
+        assert not mgr.is_quarantined("did:bad", "other-session")
+
+    def test_release_clears_quarantine(self):
+        mgr = QuarantineManager()
+        mgr.quarantine("a1", "s1", QuarantineReason.MANUAL)
+        released = mgr.release("a1", "s1")
+        assert released is not None
+        assert not released.is_active
+        assert released.released_at is not None
+        assert not mgr.is_quarantined("a1", "s1")
+        assert mgr.quarantine_count == 0
+
+    def test_release_unknown_returns_none(self):
+        mgr = QuarantineManager()
+        assert mgr.release("nobody", "s1") is None
+
+    def test_default_expiry_applied(self):
+        mgr = QuarantineManager()
+        record = mgr.quarantine("a1", "s1", QuarantineReason.MANUAL)
+        assert record.expires_at is not None
+        delta = (record.expires_at - record.entered_at).total_seconds()
+        assert abs(delta - QuarantineManager.DEFAULT_QUARANTINE_SECONDS) < 1.0
+
+    def test_custom_duration(self):
+        mgr = QuarantineManager()
+        record = mgr.quarantine("a1", "s1", QuarantineReason.MANUAL, duration_seconds=42)
+        delta = (record.expires_at - record.entered_at).total_seconds()
+        assert abs(delta - 42) < 1.0
+
+    def test_tick_expires_quarantine(self):
+        mgr = QuarantineManager()
+        record = mgr.quarantine("a1", "s1", QuarantineReason.MANUAL, duration_seconds=100)
+        assert mgr.is_quarantined("a1", "s1")
+        record.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+        # Expiry is observed lazily before tick...
+        assert not mgr.is_quarantined("a1", "s1")
+        expired = mgr.tick()
+        assert record in expired
+        assert not record.is_active
+        assert mgr.quarantine_count == 0
+
+    def test_forensic_data_persisted(self):
+        mgr = QuarantineManager()
+        record = mgr.quarantine(
+            "a1", "s1", QuarantineReason.CASCADE_SLASH, forensic_data={"score": 0.9}
+        )
+        assert record.forensic_data == {"score": 0.9}

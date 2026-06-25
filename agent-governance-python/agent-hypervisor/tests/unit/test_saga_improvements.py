@@ -293,3 +293,71 @@ class TestSagaDSL:
         )
         # Public Preview: all steps are sequential (fan_out ignored)
         assert len(defn.sequential_steps) == 3
+
+
+# ── DSL Fan-Out Parsing (BUG 3 fix) ─────────────────────────────
+
+
+class TestSagaDSLFanOutParsing:
+    def _defn(self, fan_out):
+        return {
+            "name": "x",
+            "session_id": "s1",
+            "steps": [
+                {"id": "seq1", "action_id": "a", "agent": "x"},
+                {"id": "par1", "action_id": "b", "agent": "y"},
+                {"id": "par2", "action_id": "c", "agent": "z"},
+            ],
+            "fan_out": fan_out,
+        }
+
+    def test_fan_out_round_trips_with_policy(self):
+        parser = SagaDSLParser()
+        defn = parser.parse(
+            self._defn([{"policy": "any_must_succeed", "branches": ["par1", "par2"]}])
+        )
+        assert len(defn.fan_outs) == 1
+        fo = defn.fan_outs[0]
+        assert fo.policy == FanOutPolicy.ANY_MUST_SUCCEED
+        assert fo.branch_step_ids == ["par1", "par2"]
+
+    def test_fan_out_default_policy(self):
+        parser = SagaDSLParser()
+        defn = parser.parse(self._defn([{"branches": ["par1", "par2"]}]))
+        assert defn.fan_outs[0].policy == FanOutPolicy.ALL_MUST_SUCCEED
+
+    def test_multiple_fan_out_groups(self):
+        parser = SagaDSLParser()
+        defn = parser.parse(
+            self._defn(
+                [
+                    {"policy": "majority_must_succeed", "branches": ["par1"]},
+                    {"policy": "all_must_succeed", "branches": ["par2"]},
+                ]
+            )
+        )
+        assert [fo.policy for fo in defn.fan_outs] == [
+            FanOutPolicy.MAJORITY_MUST_SUCCEED,
+            FanOutPolicy.ALL_MUST_SUCCEED,
+        ]
+
+    def test_fan_out_invalid_branch_raises(self):
+        parser = SagaDSLParser()
+        with pytest.raises(SagaDSLError, match="unknown step 'ghost'"):
+            parser.parse(self._defn([{"policy": "all_must_succeed", "branches": ["ghost"]}]))
+
+    def test_fan_out_invalid_policy_raises(self):
+        parser = SagaDSLParser()
+        with pytest.raises(SagaDSLError, match="Invalid fan-out policy"):
+            parser.parse(self._defn([{"policy": "best_effort", "branches": ["par1"]}]))
+
+    def test_no_fan_out_key_yields_empty(self):
+        parser = SagaDSLParser()
+        defn = parser.parse(
+            {
+                "name": "x",
+                "session_id": "s1",
+                "steps": [{"id": "s1", "action_id": "a", "agent": "x"}],
+            }
+        )
+        assert defn.fan_outs == []
