@@ -91,6 +91,30 @@ class SessionVFS:
         prefix = self.namespace
         return [p.removeprefix(prefix) for p in self._files if p.startswith(prefix)]
 
+    def purge_all(self, agent_did: str = "did:agt:hypervisor:gc") -> tuple[int, int]:
+        """Forcibly purge all ephemeral session data.
+
+        Clears files, path permissions, and cached snapshots. Unlike
+        :meth:`delete`, this bypasses per-path permission checks: garbage
+        collection is a system-level reclaim of the entire session and must
+        not be blocked by an agent-scoped permission entry. Snapshots are
+        cleared too — they hold full copies of file state recoverable via
+        :meth:`restore_snapshot`, so leaving them behind would retain the
+        very data the purge is meant to remove.
+
+        Returns:
+            ``(files_purged, snapshots_purged)``.
+        """
+        files_purged = len(self._files)
+        snapshots_purged = len(self._snapshots)
+        self._files.clear()
+        self._permissions.clear()
+        self._snapshots.clear()
+        self._edit_log.append(
+            VFSEdit(path=self.namespace, operation="delete", agent_did=agent_did)
+        )
+        return files_purged, snapshots_purged
+
     def set_permissions(self, path: str, allowed_agents: set[str], agent_did: str) -> VFSEdit:
         """Set path-level permissions."""
         full_path = self._resolve(path)

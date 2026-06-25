@@ -2,11 +2,12 @@
 # Licensed under the MIT License.
 """Tests for delta audit engine and commitment."""
 
-from datetime import UTC
+from datetime import UTC, datetime, timedelta
 
 from hypervisor.audit.commitment import CommitmentEngine
 from hypervisor.audit.delta import DeltaEngine, VFSChange
 from hypervisor.audit.gc import EphemeralGC, RetentionPolicy
+from hypervisor.session.sso import SessionVFS
 
 
 class TestDeltaEngine:
@@ -98,7 +99,9 @@ class TestCommitmentEngine:
 
 
 class TestEphemeralGC:
-    def test_collect(self):
+    def test_collect_accounting_only_without_live_handles(self):
+        # With no live vfs/delta_engine, collect cannot physically purge, so
+        # it must not claim it did: 0 files purged, all deltas retained.
         gc = EphemeralGC()
         result = gc.collect(
             session_id="session:1",
@@ -109,19 +112,55 @@ class TestEphemeralGC:
             estimated_cache_bytes=500_000,
             estimated_delta_bytes=50_000,
         )
-        # Public preview: no actual purge, data retained
         assert result.purged_vfs_files == 0
         assert result.retained_deltas == 20
-        # No savings since nothing is purged
         assert result.storage_saved_bytes == 0
         assert result.savings_pct == 0
 
-    def test_retention_policy(self):
-        from datetime import datetime, timedelta
+    def test_collect_purges_live_vfs_and_confirms(self):
+        # BUG 1 regression: a real VFS must actually be emptied and is_purged
+        # must reflect reality (not lie while data is still readable).
+        vfs = SessionVFS("s")
+        vfs.write("/a.txt", "data1", agent_did="did:a")
+        vfs.write("/b.txt", "data2", agent_did="did:a")
+        snap = vfs.create_snapshot()
+        assert vfs.file_count == 2
+
+        gc = EphemeralGC()
+        result = gc.collect(session_id="s", vfs=vfs)
+
+        assert vfs.file_count == 0
+        assert vfs.read("/a.txt") is None
+        assert vfs.read("/b.txt") is None
+        assert result.purged_vfs_files == 2
+        # Cached snapshot (a recoverable copy of the data) is purged too.
+        assert result.purged_caches == 1
+        assert snap not in vfs.list_snapshots()
+        assert result.storage_saved_bytes > 0
+        assert gc.is_purged("s") is True
+
+    def test_collect_expires_old_deltas_keeps_fresh(self):
+        # A real delta_engine: deltas outside the window are pruned, fresh
+        # ones retained, and the retained chain stays verifiable.
+        engine = DeltaEngine("s")
+        engine.capture("did:a", [VFSChange(path="/old.txt", operation="add")])
+        engine.capture("did:a", [VFSChange(path="/fresh.txt", operation="add")])
+        # Age the first delta past the 30-day window.
+        engine._deltas[0].timestamp = datetime.now(UTC) - timedelta(days=40)
 
         gc = EphemeralGC(RetentionPolicy(delta_retention_days=30))
+        result = gc.collect(session_id="s", delta_engine=engine)
+
+        assert result.retained_deltas == 1
+        assert len(engine.deltas) == 1
+        assert engine.deltas[0].changes[0].path.endswith("fresh.txt")
+        valid, error = engine.verify_chain()
+        assert valid is True
+        assert error is None
+
+    def test_retention_policy_expires_outside_window(self):
+        gc = EphemeralGC(RetentionPolicy(delta_retention_days=30))
         old = datetime.now(UTC) - timedelta(days=31)
-        # Public preview: never expires deltas
-        assert not gc.should_expire_deltas(old)
+        assert gc.should_expire_deltas(old)
         recent = datetime.now(UTC) - timedelta(days=1)
         assert not gc.should_expire_deltas(recent)
