@@ -93,14 +93,27 @@ class QuarantineManager:
         return record
 
     def release(self, agent_did: str, session_id: str) -> QuarantineRecord | None:
-        """Release an active quarantine early. Returns the released record,
-        or None if the agent is not currently quarantined."""
-        record = self._find_active(agent_did, session_id, include_expired=True)
-        if record is None:
+        """Release the agent's active quarantine(s) early. Clears EVERY active,
+        unexpired record for (agent_did, session_id) so ``is_quarantined`` is
+        False afterward even if the agent was quarantined more than once. Already
+        expired records are left for ``tick`` (releasing them here would stamp a
+        late ``released_at`` and overstate ``duration_seconds``). Returns the most
+        recently entered released record, or None if none were active."""
+        now = datetime.now(UTC)
+        released = [
+            record
+            for record in self._quarantines.values()
+            if record.agent_did == agent_did
+            and record.session_id == session_id
+            and record.is_active
+            and not record.is_expired
+        ]
+        if not released:
             return None
-        record.is_active = False
-        record.released_at = datetime.now(UTC)
-        return record
+        for record in released:
+            record.is_active = False
+            record.released_at = now
+        return max(released, key=lambda r: r.entered_at)
 
     def is_quarantined(self, agent_did: str, session_id: str) -> bool:
         """True if the agent has an active, unexpired quarantine for the session."""
@@ -122,15 +135,13 @@ class QuarantineManager:
                 expired.append(record)
         return expired
 
-    def _find_active(
-        self, agent_did: str, session_id: str, include_expired: bool = False
-    ) -> QuarantineRecord | None:
+    def _find_active(self, agent_did: str, session_id: str) -> QuarantineRecord | None:
         for record in self._quarantines.values():
             if (
                 record.agent_did == agent_did
                 and record.session_id == session_id
                 and record.is_active
-                and (include_expired or not record.is_expired)
+                and not record.is_expired
             ):
                 return record
         return None

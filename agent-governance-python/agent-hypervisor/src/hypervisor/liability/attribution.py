@@ -4,10 +4,14 @@
 """
 Fault attribution.
 
-Distributes saga-failure liability across the agents on the causal chain
-leading to the failure, weighted by failed actions and an optional caller
-``risk_weights`` policy. Falls back to full liability on the direct cause when
-no action graph or weights are available.
+Distributes saga-failure liability across the agents whose failed actions
+precede the declared failure step, plus a bonus for the direct cause. This is a
+deterministic heuristic (failed-action accounting), NOT a game-theoretic Shapley
+value: ``agent_actions`` carries no causal-graph edges or timestamps, so actions
+are ordered by ``step_id`` (treated as execution order) to decide which failures
+are upstream of the failure vs downstream cascade. An optional caller
+``risk_weights`` map overrides the heuristic only when it covers every
+participating agent.
 """
 
 from __future__ import annotations
@@ -70,13 +74,14 @@ class CausalAttributor:
     ) -> AttributionResult:
         """Attribute liability for a saga failure.
 
-        Walks ``agent_actions`` to the action that failed
-        (``failure_agent_did`` at ``failure_step_id``) and shares liability
-        across agents whose actions on that causal chain failed, plus a bonus
-        for the direct cause. If ``risk_weights`` keyed by agent DID are
-        provided, they override the causal split and distribute liability
-        normalized across the participating agents. With neither an action
-        graph nor matching weights, full liability goes to the direct cause.
+        Orders ``agent_actions`` by ``step_id`` and truncates at the failure
+        action (``failure_agent_did`` at ``failure_step_id``); each FAILED action
+        on that prefix earns weight, plus a ``DIRECT_CAUSE_BONUS`` for the direct
+        cause, normalized to sum 1.0. Downstream (post-failure-step) actions are
+        excluded as cascade. ``risk_weights`` override the heuristic ONLY when the
+        map covers every participating agent (so a partial map cannot silently
+        exonerate a failed agent); otherwise it is ignored and the causal split is
+        used. The result is independent of ``agent_actions`` key/insertion order.
         """
         agents = list(agent_actions.keys())
 
@@ -94,6 +99,9 @@ class CausalAttributor:
         chain = self._causal_chain(agent_actions, failure_step_id, failure_agent_did)
 
         # Causal contribution: failed actions on the chain, plus direct-cause bonus.
+        # When the direct cause participates, the bonus guarantees it positive
+        # weight, so "full liability to the direct cause" emerges naturally when no
+        # other agent failed — there is no separate fallback branch.
         causal_raw: dict[str, float] = dict.fromkeys(agents, 0.0)
         for agent_did, action in chain:
             if not action.get("success", True):
@@ -105,21 +113,25 @@ class CausalAttributor:
             a: (causal_raw[a] / causal_total if causal_total else 0.0) for a in agents
         }
 
-        use_weights = risk_weights is not None and any(
-            risk_weights.get(a, 0.0) > 0.0 for a in agents
-        )
-        if use_weights:
-            weight_raw = {a: max(0.0, risk_weights.get(a, 0.0)) for a in agents}
+        # risk_weights override only if they cover EVERY participating agent and
+        # carry positive mass; a partial map falls through to the causal split.
+        weight_total = 0.0
+        full_coverage = risk_weights is not None and all(a in risk_weights for a in agents)
+        if full_coverage:
+            weight_raw = {a: max(0.0, risk_weights[a]) for a in agents}
             weight_total = sum(weight_raw.values())
+
+        if full_coverage and weight_total > 0:
             liability = {a: weight_raw[a] / weight_total for a in agents}
             mode = "risk-weighted"
         elif causal_total > 0:
             liability = dict(causal_contribution)
             mode = "causal-chain"
         else:
-            # Fallback: no failed actions on the chain and no weights.
-            liability = {a: (1.0 if a == failure_agent_did else 0.0) for a in agents}
-            mode = "direct-cause-fallback"
+            # No participating agent is identifiable as a cause (direct cause
+            # absent and nothing failed on the chain): attribute nothing.
+            liability = dict.fromkeys(agents, 0.0)
+            mode = "no-attribution"
 
         attributions = []
         for agent_did in agents:
@@ -157,34 +169,44 @@ class CausalAttributor:
         failure_step_id: str,
         failure_agent_did: str,
     ) -> list[tuple[str, dict]]:
-        """Flatten actions in iteration order and truncate at the failure action.
+        """Order actions by ``step_id`` and truncate at the failure action.
 
-        The chain is every action up to and including the failure (matched by
-        ``failure_agent_did`` + ``failure_step_id``, falling back to the first
-        action with ``failure_step_id``). Post-failure actions are cascade
-        effects, not causes, so they are excluded. If the failure action is not
-        found, the whole flattened list is treated as the chain.
+        ``agent_actions`` has no timestamps, so ``step_id`` is the only available
+        ordering signal and is treated as execution order. Flattened actions are
+        sorted by ``(step_id, original_index)`` — a STABLE, insertion-order
+        INDEPENDENT order — then truncated at the failure action (exact
+        ``failure_agent_did`` + ``failure_step_id`` match preferred, else the first
+        action carrying ``failure_step_id``). Actions sorting after the failure are
+        downstream cascade and excluded. If the failure step is not found, the
+        whole ordered list is the chain.
+
+        NOTE: this assumes ``step_id`` values sort into execution order. Callers
+        whose step ids do not encode order should pass risk_weights instead.
         """
         flat: list[tuple[str, dict]] = [
             (agent_did, action)
             for agent_did, actions in agent_actions.items()
             for action in actions
         ]
+        ordered = sorted(
+            enumerate(flat), key=lambda item: (str(item[1][1].get("step_id", "")), item[0])
+        )
+        ordered_flat = [pair for _, pair in ordered]
 
         fail_idx = None
-        for idx, (agent_did, action) in enumerate(flat):
+        for idx, (agent_did, action) in enumerate(ordered_flat):
             if agent_did == failure_agent_did and action.get("step_id") == failure_step_id:
                 fail_idx = idx
                 break
         if fail_idx is None:
-            for idx, (_, action) in enumerate(flat):
+            for idx, (_, action) in enumerate(ordered_flat):
                 if action.get("step_id") == failure_step_id:
                     fail_idx = idx
                     break
 
         if fail_idx is None:
-            return flat
-        return flat[: fail_idx + 1]
+            return ordered_flat
+        return ordered_flat[: fail_idx + 1]
 
     @property
     def attribution_history(self) -> list[AttributionResult]:

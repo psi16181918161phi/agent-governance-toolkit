@@ -361,3 +361,20 @@ class TestSagaDSLFanOutParsing:
             }
         )
         assert defn.fan_outs == []
+
+    @pytest.mark.parametrize(
+        "bad_fan_out",
+        [
+            "notalist",
+            [123],
+            [None],
+            [{"branches": 123}],
+            [{"branches": "par1"}],
+        ],
+    )
+    def test_malformed_fan_out_raises_typed_error(self, bad_fan_out):
+        """Regression: with schema_validation off (default), malformed fan_out
+        input must raise SagaDSLError, not a raw AttributeError/TypeError."""
+        parser = SagaDSLParser()
+        with pytest.raises(SagaDSLError):
+            parser.parse(self._defn(bad_fan_out))

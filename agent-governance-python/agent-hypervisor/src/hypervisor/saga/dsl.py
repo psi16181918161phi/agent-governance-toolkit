@@ -107,10 +107,10 @@ class SagaDSLParser:
             step_ids.add(step.id)
             steps.append(step)
 
-        fan_outs = [
-            self._parse_fan_out(raw_fan_out, step_ids)
-            for raw_fan_out in definition.get("fan_out", [])
-        ]
+        raw_fan_outs = definition.get("fan_out", [])
+        if not isinstance(raw_fan_outs, list):
+            raise SagaDSLError("'fan_out' must be a list of fan-out groups")
+        fan_outs = [self._parse_fan_out(raw_fan_out, step_ids) for raw_fan_out in raw_fan_outs]
 
         return SagaDefinition(
             name=name,
@@ -147,8 +147,18 @@ class SagaDSLParser:
 
     def _parse_fan_out(self, raw: dict, valid_step_ids: set[str]) -> SagaDSLFanOut:
         """Parse a fan-out group, honoring its declared ``policy`` and
-        validating each branch against the parsed step IDs."""
+        validating each branch against the parsed step IDs.
+
+        Raises ``SagaDSLError`` (not a raw ``AttributeError``/``TypeError``) on
+        malformed input, since ``parse`` runs with ``schema_validation=False`` by
+        default and so cannot rely on the JSON schema to reject bad shapes.
+        """
+        if not isinstance(raw, dict):
+            raise SagaDSLError(f"Each fan-out group must be an object, got {type(raw).__name__}")
+
         branches = raw.get("branches", [])
+        if not isinstance(branches, list):
+            raise SagaDSLError("Fan-out 'branches' must be a list of step IDs")
         for branch_id in branches:
             if branch_id not in valid_step_ids:
                 raise SagaDSLError(

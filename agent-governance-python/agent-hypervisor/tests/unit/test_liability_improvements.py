@@ -341,6 +341,70 @@ class TestCausalAttributionDistribution:
         # Chain is s1, s2 (up to and including the failure); s3 is excluded.
         assert result.causal_chain_length == 2
 
+    def test_attribution_is_insertion_order_independent(self):
+        """Regression: liability must not depend on agent_actions dict order.
+        Same facts (a failed at s1, b failed at s2, failure at b) inserted in
+        both orders must give identical scores."""
+        ab = {
+            "a": [{"action_id": "a1", "step_id": "s1", "success": False}],
+            "b": [{"action_id": "b1", "step_id": "s2", "success": False}],
+        }
+        ba = {
+            "b": [{"action_id": "b1", "step_id": "s2", "success": False}],
+            "a": [{"action_id": "a1", "step_id": "s1", "success": False}],
+        }
+        ra = CausalAttributor().attribute("sg", "ss", ab, "s2", "b")
+        rb = CausalAttributor().attribute("sg", "ss", ba, "s2", "b")
+        assert ra.get_liability("a") == rb.get_liability("a")
+        assert ra.get_liability("b") == rb.get_liability("b")
+        assert ra.causal_chain_length == rb.causal_chain_length
+
+    def test_post_failure_action_of_multiaction_agent_excluded(self):
+        """Regression: an agent that succeeds upstream then fails AFTER the root
+        failure step is a cascade victim, not a cause. Ordering by step_id must
+        exclude its post-failure action."""
+        actions = {
+            # a: ok at s1, then fails at s3 (after b's root failure at s2)
+            "a": [
+                {"action_id": "a1", "step_id": "s1", "success": True},
+                {"action_id": "a3", "step_id": "s3", "success": False},
+            ],
+            "b": [{"action_id": "b2", "step_id": "s2", "success": False}],
+        }
+        result = CausalAttributor().attribute("sg", "ss", actions, "s2", "b")
+        assert result.get_liability("a") == 0.0
+        assert result.get_liability("b") == 1.0
+
+    def test_partial_risk_weights_fall_back_to_causal(self):
+        """Regression: a partial risk_weights map (not covering every agent) must
+        NOT silently zero the omitted failed agents. It falls back to the causal
+        split instead of treating the partial map as a complete override."""
+        actions = {
+            "a": [{"action_id": "a1", "step_id": "s1", "success": False}],
+            "b": [{"action_id": "b1", "step_id": "s2", "success": False}],
+            "c": [{"action_id": "c1", "step_id": "s3", "success": False}],
+        }
+        # Only 'a' is weighted; b and c are omitted.
+        result = CausalAttributor().attribute(
+            "sg", "ss", actions, "s3", "c", risk_weights={"a": 1.0}
+        )
+        # c (direct cause) and b (upstream failure) must retain liability.
+        assert result.get_liability("c") > 0.0
+        assert result.get_liability("b") > 0.0
+
+    def test_full_risk_weights_override_causal(self):
+        """Full-coverage weights override the causal split (BUGS.md contract):
+        a gets 0.5 even though its action succeeded (causal contribution 0)."""
+        actions = {
+            "a": [{"action_id": "a1", "step_id": "s1", "success": True}],
+            "b": [{"action_id": "b1", "step_id": "s2", "success": False}],
+        }
+        result = CausalAttributor().attribute(
+            "sg", "ss", actions, "s2", "b", risk_weights={"a": 0.5, "b": 0.5}
+        )
+        assert abs(result.get_liability("a") - 0.5) < 1e-9
+        assert abs(result.get_liability("b") - 0.5) < 1e-9
+
 
 # ── Quarantine Enforcement (BUG 1 fix) ──────────────────────────
 
@@ -406,3 +470,28 @@ class TestQuarantineEnforcement:
             "a1", "s1", QuarantineReason.CASCADE_SLASH, forensic_data={"score": 0.9}
         )
         assert record.forensic_data == {"score": 0.9}
+
+    def test_release_clears_all_stacked_quarantines(self):
+        """Regression: re-quarantining the same (agent, session) creates two
+        active records; a single release() must clear ALL of them so the agent
+        is definitively no longer quarantined."""
+        mgr = QuarantineManager()
+        mgr.quarantine("a1", "s1", QuarantineReason.MANUAL)
+        mgr.quarantine("a1", "s1", QuarantineReason.RING_BREACH)
+        assert mgr.quarantine_count == 2
+        released = mgr.release("a1", "s1")
+        assert released is not None
+        assert not mgr.is_quarantined("a1", "s1")
+        assert mgr.quarantine_count == 0
+
+    def test_release_does_not_touch_expired_records(self):
+        """Regression: release() must not 'release' an already-expired record
+        (is_quarantined already reports False); doing so would stamp a late
+        released_at and overstate duration_seconds vs tick()'s expires_at clamp."""
+        mgr = QuarantineManager()
+        record = mgr.quarantine("a1", "s1", QuarantineReason.MANUAL, duration_seconds=100)
+        record.entered_at = datetime.now(UTC) - timedelta(seconds=50)
+        record.expires_at = datetime.now(UTC) - timedelta(seconds=10)
+        assert not mgr.is_quarantined("a1", "s1")
+        assert mgr.release("a1", "s1") is None
+        assert record.released_at is None
