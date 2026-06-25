@@ -25,6 +25,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import tempfile
 import threading
 from dataclasses import dataclass
@@ -195,10 +196,14 @@ class PolicyRegistry:
         Returns:
             An opaque version token (a content hash) for optimistic concurrency.
         """
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", policy_id):
+            raise ValueError(f"Invalid policy id '{policy_id}'")
+
+        safe_policy_id = policy_id
         suffix = ".yaml" if fmt == "yaml" else ".json"
         with self._lock:
             self._policy_dir.mkdir(parents=True, exist_ok=True)
-            target = self._policy_dir / f"{policy_id}{suffix}"
+            target = self._policy_dir / f"{safe_policy_id}{suffix}"
             # Defense in depth: the HTTP layer validates ``policy_id`` against a strict
             # pattern, but guard the primitive too so a future caller cannot escape the
             # policy directory via separators or ``..`` segments.
@@ -210,7 +215,7 @@ class PolicyRegistry:
             # ``alpha`` as JSON does not leave a stale ``alpha.yaml`` that silently shadows it
             # on the next reload (sorted ``iterdir`` order is otherwise the only tiebreaker).
             for other_suffix in (*_YAML_SUFFIXES, *_JSON_SUFFIXES):
-                sibling = self._policy_dir / f"{policy_id}{other_suffix}"
+                sibling = self._policy_dir / f"{safe_policy_id}{other_suffix}"
                 if sibling != target and sibling.exists():
                     with contextlib.suppress(OSError):
                         sibling.unlink()
@@ -218,7 +223,7 @@ class PolicyRegistry:
             # so a crash or signal mid-write can never leave a partially written policy file.
             # The temp name carries a ``.tmp`` suffix so a concurrent reload scan skips it.
             fd, tmp_path = tempfile.mkstemp(
-                dir=self._policy_dir, prefix=f".{policy_id}.", suffix=f"{suffix}.tmp"
+                dir=self._policy_dir, prefix=f".{safe_policy_id}.", suffix=f"{suffix}.tmp"
             )
             try:
                 with os.fdopen(fd, "w", encoding="utf-8") as handle:
