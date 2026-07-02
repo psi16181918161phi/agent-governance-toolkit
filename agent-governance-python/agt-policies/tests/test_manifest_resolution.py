@@ -894,12 +894,10 @@ def test_resolve_invalid_field_syntax_fails_closed(tmp_path: Path) -> None:
         },
     )
 
-    manifest = resolve_manifest(root, root)
-    bundle = Path(manifest["policies"]["agt_legacy_rules"]["bundle"])
-    rego = (bundle / "agt_legacy.rego").read_text(encoding="utf-8")
+    with pytest.raises(ResolutionError) as exc:
+        resolve_manifest(root, root)
 
-    assert "runtime_error:manifest_invalid" in rego
-    assert "invalid field" in rego
+    assert exc.value.reason == ResolutionReason.INVALID_GOVERNANCE
 
 
 def test_resolve_fails_closed_when_legacy_rules_unbound(tmp_path: Path) -> None:

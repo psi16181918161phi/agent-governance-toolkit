@@ -17,6 +17,7 @@ import hashlib
 import json
 import logging
 from pathlib import Path
+import re
 import tempfile
 from typing import Any, Optional
 
@@ -217,8 +218,6 @@ def _render_rego(rules: list[dict[str, Any]]) -> str:
 
     branches: list[str] = []
     matchers: list[str] = []
-    unsupported_drops: list[str] = []
-
     for idx, rule in enumerate(rules):
         cond = rule.get("condition") or {}
         field = str(cond.get("field", ""))
@@ -229,33 +228,15 @@ def _render_rego(rules: list[dict[str, Any]]) -> str:
         message = str(rule.get("message", ""))
 
         accessor = _rego_field_accessor(field)
-        op_clause = _rego_op_clause(operator, accessor, value) if accessor is not None else None
+        if accessor is None:
+            raise ResolutionError.invalid_governance(
+                f"rule {name!r} has invalid field {field!r}"
+            )
+        op_clause = _rego_op_clause(operator, accessor, value)
         if op_clause is None:
-            # Unsupported operators or invalid field paths MUST fail
-            # closed. Render an always-matching deny rule so evaluation
-            # never silently falls through to default-allow. The merge
-            # layer should ideally catch this at validation, but this is
-            # the last line of defense.
-            invalid_detail = (
-                f"invalid field {field!r}"
-                if accessor is None
-                else f"unsupported operator {operator!r}"
+            raise ResolutionError.invalid_governance(
+                f"rule {name!r} has unsupported operator {operator!r}"
             )
-            unsupported_drops.append(name)
-            matchers.append(
-                f"_match_{idx} if {{\n"
-                f"    true\n"
-                f"}}"
-            )
-            branches.append(
-                f"verdict := {{\"decision\": \"deny\", "
-                f"\"reason\": \"runtime_error:manifest_invalid\", "
-                f"\"message\": {json.dumps(f'rule {name!r} has {invalid_detail}; fail-closed deny')}}} if {{\n"
-                f"    _match_{idx}\n"
-                + "".join(f"    not _match_{j}\n" for j in range(idx))
-                + "}"
-            )
-            continue
 
         matchers.append(
             f"_match_{idx} if {{\n"
@@ -277,14 +258,6 @@ def _render_rego(rules: list[dict[str, Any]]) -> str:
             f"    _match_{idx}\n"
             f"{previous_negations}"
             f"}}"
-        )
-
-    if unsupported_drops:
-        import logging
-        logging.getLogger(__name__).warning(
-            "agt.manifest_resolution: %d invalid rule(s) now fail-closed: %s",
-            len(unsupported_drops),
-            unsupported_drops,
         )
 
     return header + "\n\n".join(matchers) + ("\n\n" if matchers else "") + "\n\n".join(branches) + "\n"
@@ -318,11 +291,100 @@ def _rego_field_accessor(field: str) -> str | None:
     return expr
 
 
+def _is_json_literal(value: Any) -> bool:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return True
+    if isinstance(value, list):
+        return all(_is_json_literal(item) for item in value)
+    if isinstance(value, dict):
+        return all(
+            isinstance(key, str) and _is_json_literal(item)
+            for key, item in value.items()
+        )
+    return False
+
+
+def _is_escaped(pattern: str, index: int) -> bool:
+    backslashes = 0
+    cursor = index - 1
+    while cursor >= 0 and pattern[cursor] == "\\":
+        backslashes += 1
+        cursor -= 1
+    return backslashes % 2 == 1
+
+
+def _has_unsupported_re2_group(pattern: str, marker: str) -> bool:
+    in_class = False
+    for index, char in enumerate(pattern):
+        if char == "[" and not in_class and not _is_escaped(pattern, index):
+            in_class = True
+            continue
+        if char == "]" and in_class and not _is_escaped(pattern, index):
+            in_class = False
+            continue
+        if not in_class and char == "(" and not _is_escaped(pattern, index):
+            if pattern.startswith(marker, index):
+                return True
+    return False
+
+
+def _has_unsupported_re2_escape(pattern: str, marker: str) -> bool:
+    index = 0
+    while index < len(pattern):
+        if pattern[index] != "\\":
+            index += 1
+            continue
+
+        run_start = index
+        while index < len(pattern) and pattern[index] == "\\":
+            index += 1
+        if (index - run_start) % 2 == 1 and pattern.startswith(marker, index):
+            return True
+    return False
+
+
+def _validate_re2_regex(pattern: str) -> None:
+    try:
+        re.compile(pattern)
+    except re.error as exc:
+        raise ResolutionError.invalid_governance(
+            f"regex pattern {pattern!r} is invalid: {exc}"
+        ) from exc
+
+    for marker, label in (
+        ("(?=", "lookahead"),
+        ("(?!", "lookahead"),
+        ("(?<=", "lookbehind"),
+        ("(?<!", "lookbehind"),
+        ("(?>", "atomic group"),
+    ):
+        if _has_unsupported_re2_group(pattern, marker):
+            raise ResolutionError.invalid_governance(
+                f"regex pattern {pattern!r} uses unsupported RE2 construct {label}"
+            )
+
+    for digit in "123456789":
+        if _has_unsupported_re2_escape(pattern, digit):
+            raise ResolutionError.invalid_governance(
+                f"regex pattern {pattern!r} uses unsupported RE2 construct backreference"
+            )
+
+    for marker, label in (("k<", "named backreference"), ("Z", r"\Z anchor")):
+        if _has_unsupported_re2_escape(pattern, marker):
+            raise ResolutionError.invalid_governance(
+                f"regex pattern {pattern!r} uses unsupported RE2 construct {label}"
+            )
+
+
 def _rego_op_clause(operator: str, accessor: str, value: Any) -> Optional[str]:
     """Render the body of a `_match[i]` rule for a given operator.
 
-    Returns None for unsupported operators; the caller turns the rule into a fail-closed deny.
+    Returns None for unsupported operators; the caller rejects the manifest.
     """
+    if not _is_json_literal(value):
+        raise ResolutionError.invalid_governance(
+            f"condition value {value!r} is not a JSON primitive"
+        )
     literal = json.dumps(value)
     indent = "    "
     if operator == "eq":
@@ -362,6 +424,11 @@ def _rego_op_clause(operator: str, accessor: str, value: Any) -> Optional[str]:
             f"{indent}endswith(_v, {literal})"
         )
     if operator in {"matches", "regex"}:
+        if not isinstance(value, str):
+            raise ResolutionError.invalid_governance(
+                f"regex condition value {value!r} must be a string"
+            )
+        _validate_re2_regex(value)
         return (
             f"{indent}_v := {accessor}\n"
             f"{indent}_v != null\n"

@@ -47,11 +47,29 @@ def discover_policies(action_path: Path, root: Path) -> list[Path]:
             path fields). The previous v4 behaviour of returning an empty
             list defaulted to allow; v5 fails closed.
     """
-    root = root.resolve()
-    action_path = action_path.resolve()
+    try:
+        root = root.resolve()
+        action_path = action_path.resolve()
+    except (OSError, RuntimeError) as exc:
+        raise ResolutionError.path_traversal(
+            f"failed to resolve action_path under {root}: {exc}"
+        ) from exc
 
-    if action_path.is_file():
-        action_path = action_path.parent
+    try:
+        if not action_path.exists():
+            raise ResolutionError.path_traversal(f"action_path {action_path} does not exist")
+        if action_path.is_file():
+            action_path = action_path.parent
+        elif not action_path.is_dir():
+            raise ResolutionError.path_traversal(
+                f"action_path {action_path} is not a file or directory"
+            )
+    except ResolutionError:
+        raise
+    except (OSError, RuntimeError) as exc:
+        raise ResolutionError.path_traversal(
+            f"failed to inspect action_path under {root}: {exc}"
+        ) from exc
 
     if not _is_relative_to(action_path, root):
         raise ResolutionError.path_traversal(
@@ -64,14 +82,21 @@ def discover_policies(action_path: Path, root: Path) -> list[Path]:
     while True:
         for name in GOVERNANCE_FILENAMES:
             candidate = current / name
-            if candidate.is_file():
-                resolved_candidate = candidate.resolve()
-                if not _is_relative_to(resolved_candidate, root):
-                    raise ResolutionError.path_traversal(
-                        f"governance file {candidate} resolves outside workspace root {root}"
-                    )
-                candidates.append(resolved_candidate)
-                break
+            try:
+                if candidate.is_file():
+                    resolved_candidate = candidate.resolve()
+                    if not _is_relative_to(resolved_candidate, root):
+                        raise ResolutionError.path_traversal(
+                            f"governance file {candidate} resolves outside workspace root {root}"
+                        )
+                    candidates.append(resolved_candidate)
+                    break
+            except ResolutionError:
+                raise
+            except (OSError, RuntimeError) as exc:
+                raise ResolutionError.path_traversal(
+                    f"failed to walk governance chain under {root}: {exc}"
+                ) from exc
 
         if current == root or current.parent == current:
             break

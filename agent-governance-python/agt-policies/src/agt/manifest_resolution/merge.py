@@ -222,55 +222,80 @@ def _scalar_conditions_disjoint(left: dict[str, Any], right: dict[str, Any]) -> 
     return False
 
 
-def _condition_unsatisfiable(condition: Any) -> bool:
-    if not isinstance(condition, dict):
-        return False
-    and_items = _compound_items(condition, "and")
-    if and_items is not None:
-        return any(_condition_unsatisfiable(item) for item in and_items) or any(
-            _conditions_disjoint(left, right)
-            for index, left in enumerate(and_items)
-            for right in and_items[index + 1 :]
-        )
-    or_items = _compound_items(condition, "or")
-    if or_items is not None:
-        return not or_items or all(_condition_unsatisfiable(item) for item in or_items)
-    if "not" in condition:
-        return False
-    parts = _condition_parts(condition)
-    return parts is not None and parts[1] == "in" and condition.get("value") == []
+def _parent_deny_conditions_disjoint(
+    parent_condition: Any, child_condition: Any
+) -> tuple[bool, bool]:
+    if not isinstance(parent_condition, dict) or not isinstance(child_condition, dict):
+        return False, False
+
+    if "or" in parent_condition:
+        parent_or = _compound_items(parent_condition, "or")
+        if not parent_or:
+            return False, False
+        results = [
+            _parent_deny_conditions_disjoint(item, child_condition)
+            for item in parent_or
+        ]
+        if not all(analyzable for analyzable, _ in results):
+            return False, False
+        return True, all(disjoint for _, disjoint in results)
+
+    if "or" in child_condition:
+        child_or = _compound_items(child_condition, "or")
+        if not child_or:
+            return False, False
+        results = [
+            _parent_deny_conditions_disjoint(parent_condition, item)
+            for item in child_or
+        ]
+        if not all(analyzable for analyzable, _ in results):
+            return False, False
+        return True, all(disjoint for _, disjoint in results)
+
+    if "and" in parent_condition:
+        parent_and = _compound_items(parent_condition, "and")
+        if not parent_and:
+            return False, False
+        results = [
+            _parent_deny_conditions_disjoint(item, child_condition)
+            for item in parent_and
+        ]
+        if not all(analyzable for analyzable, _ in results):
+            return False, False
+        return True, any(disjoint for _, disjoint in results)
+
+    if "and" in child_condition:
+        child_and = _compound_items(child_condition, "and")
+        if not child_and:
+            return False, False
+        results = [
+            _parent_deny_conditions_disjoint(parent_condition, item)
+            for item in child_and
+        ]
+        if not all(analyzable for analyzable, _ in results):
+            return False, False
+        return True, any(disjoint for _, disjoint in results)
+
+    if "not" in parent_condition or "not" in child_condition:
+        return False, False
+
+    if _condition_parts(parent_condition) is None or _condition_parts(
+        child_condition
+    ) is None:
+        return False, False
+
+    return True, _scalar_conditions_disjoint(parent_condition, child_condition)
 
 
-def _conditions_disjoint(left: Any, right: Any) -> bool:
-    if _condition_unsatisfiable(left) or _condition_unsatisfiable(right):
-        return True
-    if not isinstance(left, dict) or not isinstance(right, dict):
-        return False
-
-    left_or = _compound_items(left, "or")
-    if left_or is not None:
-        return all(_conditions_disjoint(item, right) for item in left_or)
-    right_or = _compound_items(right, "or")
-    if right_or is not None:
-        return all(_conditions_disjoint(left, item) for item in right_or)
-
-    left_and = _compound_items(left, "and")
-    if left_and is not None:
-        return any(_conditions_disjoint(item, right) for item in left_and)
-    right_and = _compound_items(right, "and")
-    if right_and is not None:
-        return any(_conditions_disjoint(left, item) for item in right_and)
-
-    if "not" in left or "not" in right:
-        return False
-
-    return _scalar_conditions_disjoint(left, right)
-
-
-def _conditions_overlap(parent_condition: Any, child_condition: Any) -> bool:
+def _parent_deny_overlaps_child(parent_condition: Any, child_condition: Any) -> bool:
+    """Conservatively decide whether a parent deny can block a child allow."""
     if _condition_key(parent_condition) == _condition_key(child_condition):
         return True
-    return not _conditions_disjoint(parent_condition, child_condition)
+
+    analyzable, disjoint = _parent_deny_conditions_disjoint(
+        parent_condition, child_condition
+    )
+    return not (analyzable and disjoint)
 
 
 def merge_documents(documents: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -326,7 +351,7 @@ def merge_documents(documents: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     for deny_rule, deny_level in parent_denies
                     if deny_level < level
                     and _rule_action(rule) == "allow"
-                    and _conditions_overlap(
+                    and _parent_deny_overlaps_child(
                         deny_rule.get("condition"), rule.get("condition")
                     )
                 ),

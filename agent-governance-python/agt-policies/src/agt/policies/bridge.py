@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import shutil
 import tempfile
 from pathlib import Path
@@ -95,6 +96,12 @@ def _find_stock_rego_root() -> Path:
     )
 
 
+def _validate_finite_threshold(name: str, value: Any) -> None:
+    """Reject non-finite numeric thresholds before rendering Rego literals."""
+    if value is not None and not math.isfinite(value):
+        raise ValueError(f"{name} must be finite, got {value!r}")
+
+
 def _pattern_to_regex(pattern: Any) -> str:
     """Normalise a v4 ``blocked_patterns`` entry to a Go RE2 regex string.
 
@@ -119,9 +126,16 @@ def _pattern_to_regex(pattern: Any) -> str:
         if kind_name == "REGEX":
             return value
         if kind_name == "GLOB":
-            import fnmatch
-
-            return fnmatch.translate(value)
+            out = ["^"]
+            for ch in value:
+                if ch == "*":
+                    out.append(".*")
+                elif ch == "?":
+                    out.append(".")
+                else:
+                    out.append(re.escape(ch))
+            out.append("$")
+            return "".join(out)
         raise ValueError(f"unsupported PatternType: {kind!r}")
 
     raise ValueError(f"unsupported blocked_patterns entry: {pattern!r}")
@@ -137,6 +151,10 @@ def _render_rego(
     require_human_approval: bool,
 ) -> str:
     """Render the bridge Rego module body."""
+    _validate_finite_threshold("max_tokens", max_tokens)
+    _validate_finite_threshold("max_tool_calls", max_tool_calls)
+    _validate_finite_threshold("confidence_threshold", confidence_threshold)
+
     lines: list[str] = [
         "# Copyright (c) Microsoft Corporation.",
         "# Licensed under the MIT License.",
@@ -166,10 +184,12 @@ def _render_rego(
 
     pattern_list = list(blocked_patterns)
     if pattern_list:
-        rendered_patterns = ", ".join(json.dumps(p) for p in pattern_list)
+        rendered_patterns = ", ".join(
+            json.dumps(p, allow_nan=False) for p in pattern_list
+        )
         branches.append(
             "v := patterns.deny_if_pattern(policy_text, "
-            f"[{rendered_patterns}], {json.dumps(_REASON_PATTERN)})"
+            f"[{rendered_patterns}], {json.dumps(_REASON_PATTERN, allow_nan=False)})"
         )
 
     budget_thresholds: dict[str, Any] = {}
@@ -180,12 +200,13 @@ def _render_rego(
     if budget_thresholds:
         branches.append(
             "v := budgets.deny_if_budget_exceeded("
-            f"{json.dumps(budget_thresholds)})"
+            f"{json.dumps(budget_thresholds, allow_nan=False)})"
         )
 
     if confidence_threshold is not None and confidence_threshold > 0.0:
         branches.append(
-            f"v := confidence.deny_if_low_confidence({json.dumps(confidence_threshold)})"
+            "v := confidence.deny_if_low_confidence("
+            f"{json.dumps(confidence_threshold, allow_nan=False)})"
         )
 
     if require_human_approval:
@@ -301,6 +322,10 @@ def governance_to_acs_manifest(
         ``policy.allowed_tools``. ``approval`` is set when
         ``require_human_approval`` is true.
     """
+    _validate_finite_threshold("max_tokens", policy.max_tokens)
+    _validate_finite_threshold("max_tool_calls", policy.max_tool_calls)
+    _validate_finite_threshold("confidence_threshold", policy.confidence_threshold)
+
     bundle_dir = (
         Path(bundle_dir).resolve()
         if bundle_dir is not None

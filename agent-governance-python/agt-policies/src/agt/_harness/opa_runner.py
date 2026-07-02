@@ -64,6 +64,40 @@ class ScenarioResult:
         return self.decision == "transform"
 
 
+_VALID_OPA_DECISIONS = {"allow", "warn", "deny", "escalate", "transform"}
+
+
+def _decode_opa_verdict(response: dict) -> ScenarioResult:
+    """Decode an OPA JSON response into a normalized scenario result."""
+    results = response.get("result") or []
+    if not results:
+        raise RuntimeError("opa eval produced no result")
+
+    expressions = results[0].get("expressions", [{}])
+    value = expressions[0].get("value") if expressions else None
+    if not isinstance(value, dict):
+        raise RuntimeError(f"opa returned non-object verdict: {value!r}")
+
+    decision = value.get("decision")
+    if not isinstance(decision, str) or decision not in _VALID_OPA_DECISIONS:
+        return ScenarioResult(
+            decision="deny",
+            reason="runtime_error:engine_invalid_verdict",
+            message=f"opa returned verdict without recognized decision: {value!r}",
+            raw=value,
+        )
+
+    return ScenarioResult(
+        decision=str(decision),
+        reason=value.get("reason"),
+        message=value.get("message"),
+        transform=value.get("transform"),
+        evidence=value.get("evidence"),
+        result_labels=value.get("result_labels"),
+        raw=value,
+    )
+
+
 def _find_stock_rego_root() -> Path:
     """Locate the AGT stock Rego library directory inside the repo."""
     here = Path(__file__).resolve()
@@ -261,17 +295,4 @@ def run_scenario(
         raise RuntimeError(f"opa eval failed: {proc.stderr.strip()}")
 
     response = json.loads(proc.stdout)
-    expressions = response.get("result", [{}])[0].get("expressions", [{}])
-    value = expressions[0].get("value") if expressions else None
-    if not isinstance(value, dict):
-        raise RuntimeError(f"opa returned non-object verdict: {value!r}")
-
-    return ScenarioResult(
-        decision=str(value.get("decision", "allow")),
-        reason=value.get("reason"),
-        message=value.get("message"),
-        transform=value.get("transform"),
-        evidence=value.get("evidence"),
-        result_labels=value.get("result_labels"),
-        raw=value,
-    )
+    return _decode_opa_verdict(response)

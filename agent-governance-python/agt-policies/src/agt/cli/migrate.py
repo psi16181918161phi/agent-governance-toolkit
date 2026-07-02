@@ -505,7 +505,10 @@ def _migrate_governance_chain(
             yaml.safe_dump(manifest, sort_keys=False),
             encoding="utf-8",
         )
+        chain_root_resolved = chain_root.resolve()
         for gov_file in discovered:
+            if gov_file.parent.resolve() != chain_root_resolved:
+                continue
             backup = gov_file.with_name(f".{gov_file.name}.v4-backup")
             if gov_file.exists():
                 gov_file.replace(backup)

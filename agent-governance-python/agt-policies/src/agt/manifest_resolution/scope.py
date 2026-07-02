@@ -16,6 +16,8 @@ from fnmatch import fnmatch
 from pathlib import Path
 from typing import Optional
 
+from .errors import ResolutionError
+
 
 def filter_by_scope(
     policy_path: Path,
@@ -43,7 +45,12 @@ def filter_by_scope(
 
     root = root.resolve()
     action_path = action_path.resolve()
-    action_rel = str(action_path.relative_to(root)).replace("\\", "/")
+    try:
+        action_rel = str(action_path.relative_to(root)).replace("\\", "/")
+    except ValueError as exc:
+        raise ResolutionError.path_traversal(
+            f"action_path {action_path} is not under workspace root {root}"
+        ) from exc
     normalized_scope = scope_pattern.replace("\\", "/")
 
     if normalized_scope.endswith("/"):
