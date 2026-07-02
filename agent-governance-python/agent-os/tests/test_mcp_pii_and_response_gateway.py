@@ -4,8 +4,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from agent_os.credential_redactor import CredentialRedactor
 from agent_os.integrations.base import GovernancePolicy
 from agent_os.mcp_gateway import (
@@ -201,7 +199,7 @@ class TestGatewayResponseBlock:
 
 
 class TestGatewayResponseSanitize:
-    """ResponsePolicy.SANITIZE: strip injection tags, block credential/PII."""
+    """ResponsePolicy.SANITIZE: strip injection tags, redact credentials, block PII/exfil."""
 
     def test_injection_tags_stripped(self):
         gw = _make_gateway(response_policy=ResponsePolicy.SANITIZE)
@@ -220,13 +218,41 @@ class TestGatewayResponseSanitize:
         assert decision.allowed is False
         assert "cannot be sanitized" in decision.reason
 
-    def test_credential_still_blocked_in_sanitize_mode(self):
+    def test_credential_redacted_in_sanitize_mode(self):
         gw = _make_gateway(response_policy=ResponsePolicy.SANITIZE)
-        decision = gw.intercept_tool_response(
-            "a1", "tool", "sk-test_abcdefghijklmnopqrstuvwxyz"
-        )
-        assert decision.allowed is False
-        assert "credential_leak" in decision.reason
+        secret = "sk-test_abcdefghijklmnopqrstuvwxyz"
+        decision = gw.intercept_tool_response("a1", "tool", secret)
+        assert decision.allowed is True
+        assert decision.action == "sanitized"
+        assert secret not in (decision.content or "")
+        assert "[REDACTED]" in (decision.content or "")
+
+    def test_google_key_redacted_not_pii_blocked_in_sanitize_mode(self):
+        # Google keys contain digit runs that used to register as a false
+        # "US phone number" PII match and wrongly hard-block a redactable secret.
+        gw = _make_gateway(response_policy=ResponsePolicy.SANITIZE)
+        secret = "AIzaSyD-1234567890abcdefghijklmnopqrs12"
+        decision = gw.intercept_tool_response("a1", "tool", secret)
+        assert decision.allowed is True
+        assert decision.action == "sanitized"
+        assert secret not in (decision.content or "")
+
+    def test_slack_token_redacted_in_sanitize_mode(self):
+        gw = _make_gateway(response_policy=ResponsePolicy.SANITIZE)
+        secret = "xoxb-FAKE-not-a-real-slack-token-00"
+        decision = gw.intercept_tool_response("a1", "tool", secret)
+        assert decision.allowed is True
+        assert decision.action == "sanitized"
+        assert secret not in (decision.content or "")
+
+    def test_adjacent_anchored_secret_not_leaked_in_sanitize_mode(self):
+        # End-to-end regression: a greedy pattern must not consume a following
+        # pattern's anchor and let the secret pass the fail-closed re-check.
+        gw = _make_gateway(response_policy=ResponsePolicy.SANITIZE)
+        secret = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+        text = "sk-abcDEF012345678901234567890-aws_secret_access_key=" + secret
+        decision = gw.intercept_tool_response("a1", "tool", text)
+        assert secret not in (decision.content or "")
 
     def test_exfiltration_still_blocked_in_sanitize_mode(self):
         gw = _make_gateway(response_policy=ResponsePolicy.SANITIZE)
