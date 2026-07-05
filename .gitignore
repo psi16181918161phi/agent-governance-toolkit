@@ -470,3 +470,14 @@ _site/
 # Code Security Assessment artifacts
 .security-assessment/
 *.tgz
+agent-governance-python/agent-os/extensions/jetbrains/.gradle/8.5/gc.properties
+agent-governance-python/agent-os/extensions/jetbrains/.gradle/8.5/checksums/checksums.lock
+agent-governance-python/agent-os/extensions/jetbrains/.gradle/8.5/checksums/md5-checksums.bin
+agent-governance-python/agent-os/extensions/jetbrains/.gradle/8.5/checksums/sha1-checksums.bin
+agent-governance-python/agent-os/extensions/jetbrains/.gradle/8.5/dependencies-accessors/dependencies-accessors.lock
+agent-governance-python/agent-os/extensions/jetbrains/.gradle/8.5/dependencies-accessors/gc.properties
+agent-governance-python/agent-os/extensions/jetbrains/.gradle/8.5/fileChanges/last-build.bin
+agent-governance-python/agent-os/extensions/jetbrains/.gradle/8.5/fileHashes/fileHashes.lock
+agent-governance-python/agent-os/extensions/jetbrains/.gradle/buildOutputCleanup/buildOutputCleanup.lock
+agent-governance-python/agent-os/extensions/jetbrains/.gradle/buildOutputCleanup/cache.properties
+agent-governance-python/agent-os/extensions/jetbrains/.gradle/vcs-1/gc.properties
